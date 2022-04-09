@@ -34,7 +34,7 @@ def build(bld):
     # RELEASE
     sdk_lib_path = []
     libs = []
-    compile_flags = ['-g']
+    compile_flags = ['-O0', '-g', '-msse4.1']
     linker_flags = []
 
     # Build risctool
