@@ -10,7 +10,7 @@
 			"type": "cppdbg",
 			"request": "launch",
 			"program": "${workspaceFolder}/build/release/bvh8tool",
-			"args": [],
+			"args": ["-exec set output-radix 16"],
 			"stopAtEntry": false,
 			"cwd": "${fileDirname}",
 			"environment": [],

@@ -9,19 +9,27 @@
 
 #define MAX_TRIS 8
 
+#define BVH8IllegalIndex 0xFFFFFFFF
+
+// NOTE: This structure is very expensive for E32E, a data reduction method has to be applied here.
+// One approach could be to only stash connected triangle fans here.
 struct BVH8LeafNode
 {
 	uint32 m_NumTriangles{0};
 	SVec128 m_Vertices[3*MAX_TRIS]; // X-Y-Z-A
 };
 
+// NOTE: It is best if this structure fits into E32E's 64 byte cache line
+// Currently it's 48 bytes which means 
 struct BVH8NodeInfo
 {
-	static const uint32 SSDIllegalIndex = 0xFFFFFFFF;
 	BVH8NodeInfo(){ }
 	explicit BVH8NodeInfo(const uint32 _spatialKey, const uint32 _dataindex) : m_SpatialKey(_spatialKey), m_DataIndex(_dataindex) { }
+
+	// LCM of 48 (current byte size) and 64 (E32E cache size) is 192
+	// This means 4 of this structure will fit into 3 cache lines
 	uint32 m_SpatialKey{0};
-	uint32 m_DataIndex{SSDIllegalIndex};
+	uint32 m_DataIndex{BVH8IllegalIndex};
 	uint32 m_ChildCount{0};
 	uint32 m_unused_padding_0;
 	SVec128 m_BoundsMin{FLT_MAX,FLT_MAX,FLT_MAX,0.f};
@@ -163,15 +171,6 @@ inline void ERadixSortSpatialDatabaseDescending(BVH8NodeInfo *_sortArray, BVH8No
 }
 
 // --------------------------------------------------------------------------------------------------------------------------
-// Debugging helpers
-// --------------------------------------------------------------------------------------------------------------------------
-
-struct SSpatialCacheDebugVertex
-{
-	float pos[3];
-};
-
-// --------------------------------------------------------------------------------------------------------------------------
 // BVH related structures
 // --------------------------------------------------------------------------------------------------------------------------
 
@@ -294,7 +293,7 @@ struct SBVH8Database
 	{
 		size_t keyIndex = m_dataLookup.size();
 		// Store illegal index to hint "no data" together with key
-		m_dataLookup.emplace_back(BVH8NodeInfo(_cellKey, BVH8NodeInfo::SSDIllegalIndex));
+		m_dataLookup.emplace_back(BVH8NodeInfo(_cellKey, BVH8IllegalIndex));
 		m_isSorted = false;
 		return keyIndex; // Return index of appended entry
 	}
@@ -317,9 +316,9 @@ struct SBVH8Database
 
 	void SetGridAABB(const SVec128 &_aabbMin, const SVec128 &_aabbMax)
 	{
-		SVec128 tentwentyfour = EVecConst(1024.f,1024.f,1024.f,1.f);
+		SVec128 tentwentythree = EVecConst(1023.f, 1023.f, 1023.f, 1.f);
 		m_GridAABBMin = _aabbMin;
-		m_GridCellSize = EVecDiv(EVecSub(_aabbMax,_aabbMin), tentwentyfour);
+		m_GridCellSize = EVecDiv(EVecSub(_aabbMax,_aabbMin), tentwentythree);
 	}
 
 	EInline void ToGridUnits(const SVec128 &_worldPosition, SVec128 &_gridLocalPosition)
@@ -365,6 +364,22 @@ struct SBVH8Database
 		_qXYZ[0] = uint32(EFloor(EVecGetFloatX(gridLocalPosition)));
 		_qXYZ[1] = uint32(EFloor(EVecGetFloatY(gridLocalPosition)));
 		_qXYZ[2] = uint32(EFloor(EVecGetFloatZ(gridLocalPosition)));
+	}
+
+	uint32 FindCell(const uint32 _cellKey, uint32 &_keyIndex)
+	{
+		auto foundItem = std::find_if(m_dataLookup.begin(), m_dataLookup.end(),
+			[&_cellKey](BVH8NodeInfo const& item) { return item.m_SpatialKey == _cellKey; }
+		);
+		
+		if (foundItem != m_dataLookup.end())
+		{
+			_keyIndex = foundItem - m_dataLookup.begin();
+			return uint32(foundItem->m_DataIndex);
+		}
+		else
+			_keyIndex = 0xFFFFFFFF;
+		return BVH8IllegalIndex;
 	}
 
 	// Returns pointer to appended item.
@@ -493,7 +508,11 @@ struct SBVH8Database
 			BVH8NodeInfo datalookup;
 			datalookup.m_BoundsMin = EVecMin(datalookup.m_BoundsMin, m_dataLookup[i].m_BoundsMin);
 			datalookup.m_BoundsMax = EVecMax(datalookup.m_BoundsMax, m_dataLookup[i].m_BoundsMax);
-			for(uint32 j=i+1; j<EMinimum(i+8,lod_start_offset); ++j)
+			uint32 rangeTop = i+1;
+			uint32 rangeEnd = EMinimum(i+8,lod_start_offset);
+			if (rangeTop == rangeEnd)
+				break;
+			for(uint32 j=rangeTop; j<rangeEnd; ++j)
 			{
 				uint32 sibling_key = m_dataLookup[j].m_SpatialKey;
 				uint32 octree_sibling_key = sibling_key&0xFFFFFFF8;
