@@ -26,9 +26,9 @@ def configure(conf):
 def build(bld):
 
     if ('COMSPEC' in os.environ):
-        platform_defines = ['_CRT_SECURE_NO_WARNINGS', 'PLATFORM_WINDOWS']
+        platform_defines = ['_CRT_SECURE_NO_WARNINGS', 'PLATFORM_WINDOWS', 'LBVH_NO_THREADS']
     else:
-        platform_defines = ['_CRT_SECURE_NO_WARNINGS', 'PLATFORM_LINUX']
+        platform_defines = ['_CRT_SECURE_NO_WARNINGS', 'PLATFORM_LINUX', 'LBVH_NO_THREADS']
     includes = ['source', 'includes']
 
     # RELEASE
