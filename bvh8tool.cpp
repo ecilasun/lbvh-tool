@@ -19,7 +19,7 @@ triangle testtris[3] = {
 	{-3,-3,-3, 3,-3,3, 3,-3,-3},
 	{-3,-3,-3, -3,-3,13, 3,-3,13},
 	// Single tri facing forward
-	{0,0,2, 0,-3,2, 2,-3,2},
+	{0,0,2, 0,-13,2, 2,-13,2},
 };
 
 void dumpNodes(lbvh::bvh<float> &bvh, uint32 node)
@@ -94,7 +94,7 @@ float TriHit(SVec128& origin, SVec128& direction, SVec128& v1, SVec128& v2, SVec
 }
 
 
-bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVec128& invRayDir, SVec128& isect, SVec128& exitpos)
+bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVec128& invRayDir/*, SVec128& isect, SVec128& exitpos*/)
 {
 	SVec128 t0 = EVecMul(EVecSub(p0, rayOrigin), invRayDir);
 	SVec128 t1 = EVecMul(EVecSub(p1, rayOrigin), invRayDir);
@@ -102,8 +102,8 @@ bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVe
 	SVec128 tmax = EVecMax(t0, t1);
 	float enter = EVecMaxComponent3(tmin);
 	float exit = EVecMinComponent3(tmax);
-	isect = EVecAdd(rayOrigin, EVecMul(EVecConst(enter,enter,enter,0.f), rayDir));
-	exitpos = EVecAdd(rayOrigin, EVecMul(EVecConst(exit,exit,exit,0.f), rayDir));
+	//SVec128 isect = EVecAdd(rayOrigin, EVecMul(EVecConst(enter,enter,enter,0.f), rayDir));
+	//SVec128 exitpos = EVecAdd(rayOrigin, EVecMul(EVecConst(exit,exit,exit,0.f), rayDir));
 	return enter <= exit;
 }
 
@@ -123,8 +123,8 @@ float traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, SVec128& rayOrigin, SVec1
 	SVec128 p0{bvh[nodeid].box.min.x, bvh[nodeid].box.min.y, bvh[nodeid].box.min.z, 0.f};
 	SVec128 p1{bvh[nodeid].box.max.x, bvh[nodeid].box.max.y, bvh[nodeid].box.max.z, 0.f};
 
-	SVec128 isect, exitpos;
-	bool hit = SlabTest(p0, p1, rayOrigin, rayDir, invRayDir, isect, exitpos);
+	/*SVec128 isect, exitpos;*/
+	bool hit = SlabTest(p0, p1, rayOrigin, rayDir, invRayDir/*, isect, exitpos*/);
 	if (hit) // We hit the bounds
 	{
 		// NOTE: This is easily solvable for BVH8 with a ray octant mask
