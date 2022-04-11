@@ -107,9 +107,10 @@ bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVe
 	return enter <= exit;
 }
 
-void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, float& closestHit, SVec128& rayOrigin, SVec128& rayDir, SVec128& invRayDir)
+void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float& closestHit, SVec128& rayOrigin, SVec128& rayDir, SVec128& invRayDir)
 {
 	uint nodeid = rootnode&0x7FFFFFFF;
+	marchCount++;
 
 	if (rootnode&0x80000000) // This is a leaf node, do a triangle test
 	{
@@ -135,8 +136,8 @@ void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, float& closestHit, SVec128
 		// In this case we'll need to check for the 'nearest' hit somehow
 		// or know which node is the best hit candidate ahead of time
 
-		traceBVH(bvh, bvh[nodeid].right, closestHit, rayOrigin, rayDir, invRayDir);
-		traceBVH(bvh, bvh[nodeid].left, closestHit, rayOrigin, rayDir, invRayDir);
+		traceBVH(bvh, bvh[nodeid].right, marchCount, closestHit, rayOrigin, rayDir, invRayDir);
+		traceBVH(bvh, bvh[nodeid].left, marchCount, closestHit, rayOrigin, rayDir, invRayDir);
 	}
 }
 
@@ -246,19 +247,20 @@ int main(int _argc, char** _argv)
 
 				// Trace and return hit depth
 				float closestHit = 64.f;
-				traceBVH(bvh, 0, closestHit, rayOrigin, /*rotDir*/rayDir, invRayDir);
+				uint32 marchCount = 0;
+				traceBVH(bvh, 0, marchCount, closestHit, rayOrigin, /*rotDir*/rayDir, invRayDir);
 
 				if (closestHit<64.f)
 				{
 					pixels[(x+y*1920)*4+0] = int(closestHit*255.f);
-					pixels[(x+y*1920)*4+1] = int(closestHit*255.f);
-					pixels[(x+y*1920)*4+2] = int(closestHit*255.f);
+					pixels[(x+y*1920)*4+1] = marchCount*8;
+					pixels[(x+y*1920)*4+2] = 0;
 				}
 				else
 				{
-					pixels[(x+y*1920)*4+0] = 64;
-					pixels[(x+y*1920)*4+1] = 64;
-					pixels[(x+y*1920)*4+2] = 128;
+					pixels[(x+y*1920)*4+0] = 0;
+					pixels[(x+y*1920)*4+1] = marchCount*8;
+					pixels[(x+y*1920)*4+2] = 0;
 				}
 				pixels[(x+y*1920)*4+3] = 0xFF;
 			}
