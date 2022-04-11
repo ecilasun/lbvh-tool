@@ -16,10 +16,10 @@ struct hitinfo final {
 
 triangle testtris[3] = {
 	// Floor plane
-	{-3,-3,-3, 3,-3,3, 3,-3,-3},
+	{-3,-3,-3, 3,-3,13, 3,-3,-3},
 	{-3,-3,-3, -3,-3,13, 3,-3,13},
 	// Single tri facing forward
-	{0,0,2, 0,-13,2, 2,-13,2},
+	{0,0,5, 0,-6,5, 2,-6,5},
 };
 
 void dumpNodes(lbvh::bvh<float> &bvh, uint32 node)
@@ -107,7 +107,7 @@ bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVe
 	return enter <= exit;
 }
 
-float traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, SVec128& rayOrigin, SVec128& rayDir, SVec128& invRayDir)
+void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, float& closestHit, SVec128& rayOrigin, SVec128& rayDir, SVec128& invRayDir)
 {
 	uint nodeid = rootnode&0x7FFFFFFF;
 
@@ -117,7 +117,11 @@ float traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, SVec128& rayOrigin, SVec1
 		SVec128 v1{testtris[nodeid].coords[3], testtris[nodeid].coords[4], testtris[nodeid].coords[5],0.f};
 		SVec128 v2{testtris[nodeid].coords[6], testtris[nodeid].coords[7], testtris[nodeid].coords[8],0.f};
 		float hitT = TriHit(rayOrigin, rayDir, v0, v1, v2, 512.f);
-		return hitT>1.f ? -1.f : hitT;
+
+		// Closer than closest hit?
+		if (hitT < closestHit)
+			closestHit = hitT;
+		return;
 	}
 
 	SVec128 p0{bvh[nodeid].box.min.x, bvh[nodeid].box.min.y, bvh[nodeid].box.min.z, 0.f};
@@ -131,17 +135,9 @@ float traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, SVec128& rayOrigin, SVec1
 		// In this case we'll need to check for the 'nearest' hit somehow
 		// or know which node is the best hit candidate ahead of time
 
-		float hitR = traceBVH(bvh, bvh[nodeid].right, rayOrigin, rayDir, invRayDir);
-		if (hitR > 0.f)
-			return hitR;
-
-		float hitL = traceBVH(bvh, bvh[nodeid].left, rayOrigin, rayDir, invRayDir);
-		if (hitL > 0.f)
-			return hitL;
+		traceBVH(bvh, bvh[nodeid].right, closestHit, rayOrigin, rayDir, invRayDir);
+		traceBVH(bvh, bvh[nodeid].left, closestHit, rayOrigin, rayDir, invRayDir);
 	}
-
-	// We passed right through this, return a negative value
-	return -1.f;
 }
 
 SVec128 RayDirection(float fieldOfView, float fragCoordX, float fragCoordY)
@@ -249,19 +245,20 @@ int main(int _argc, char** _argv)
 				//SVec128 invRayDir = EVecRcp(rotDir);
 
 				// Trace and return hit depth
-				float t = traceBVH(bvh, 0, rayOrigin, /*rotDir*/rayDir, invRayDir);
+				float closestHit = 64.f;
+				traceBVH(bvh, 0, closestHit, rayOrigin, /*rotDir*/rayDir, invRayDir);
 
-				if (t<0)
+				if (closestHit<64.f)
+				{
+					pixels[(x+y*1920)*4+0] = int(closestHit*255.f);
+					pixels[(x+y*1920)*4+1] = int(closestHit*255.f);
+					pixels[(x+y*1920)*4+2] = int(closestHit*255.f);
+				}
+				else
 				{
 					pixels[(x+y*1920)*4+0] = 64;
 					pixels[(x+y*1920)*4+1] = 64;
 					pixels[(x+y*1920)*4+2] = 128;
-				}
-				else
-				{
-					pixels[(x+y*1920)*4+0] = int(t*255.f);
-					pixels[(x+y*1920)*4+1] = int(t*255.f);
-					pixels[(x+y*1920)*4+2] = int(t*255.f);
 				}
 				pixels[(x+y*1920)*4+3] = 0xFF;
 			}
