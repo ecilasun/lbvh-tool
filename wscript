@@ -33,8 +33,8 @@ def build(bld):
 
     # RELEASE
     sdk_lib_path = []
-    libs = []
-    compile_flags = ['-O0', '-g', '-msse4.1']
+    libs = ['SDL2']
+    compile_flags = ['-O0', '-std=c++17', '-g', '-msse4.1']
     linker_flags = []
 
     # Build risctool
@@ -45,5 +45,5 @@ def build(bld):
         target='bvh8tool',
         defines=platform_defines,
         includes=includes,
-        libpath=[sdk_lib_path],
+        libpath=sdk_lib_path,
         lib=libs)
