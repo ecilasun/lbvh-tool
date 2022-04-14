@@ -1064,7 +1064,7 @@ EInline SMatrix4x4 EMatLookAtRightHanded(const SVec128 _eye, const SVec128 _at, 
 	mat.r[1] = D1;
 	mat.r[2] = D2;
 	mat.r[3] = g_XMIdentityR3;
-	mat = EMatTranspose(mat);
+	//mat = EMatTranspose(mat); // DO NOT transpose for non-DX clients
 	return mat;
 }
 

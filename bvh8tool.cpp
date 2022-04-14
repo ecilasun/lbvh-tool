@@ -16,10 +16,10 @@ struct hitinfo final {
 
 triangle testtris[3] = {
 	// Floor plane
-	{-3,-3,-3, 3,-3,13, 3,-3,-3},
-	{-3,-3,-3, -3,-3,13, 3,-3,13},
+	{-3,-3,-3, 3,-3,5, 3,-3,-3},
+	{-3,-3,-3, -3,-3,5, 3,-3,5},
 	// Single tri facing forward
-	{0,0,5, 0,-6,5, 2,-6,5},
+	{0,4,2, 0,-9,2, 2,-9,2},
 };
 
 void dumpNodes(lbvh::bvh<float> &bvh, uint32 node)
@@ -107,7 +107,7 @@ bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVe
 	return enter <= exit;
 }
 
-void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float& closestHit, SVec128& rayOrigin, SVec128& rayDir, SVec128& invRayDir)
+void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float& closestHit, SVec128& rayOrigin, uint32& hitID, SVec128& rayDir, SVec128& invRayDir)
 {
 	uint nodeid = rootnode&0x7FFFFFFF;
 	marchCount++;
@@ -121,7 +121,10 @@ void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float&
 
 		// Closer than closest hit?
 		if (hitT < closestHit)
+		{
 			closestHit = hitT;
+			hitID = nodeid;
+		}
 		return;
 	}
 
@@ -136,8 +139,8 @@ void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float&
 		// In this case we'll need to check for the 'nearest' hit somehow
 		// or know which node is the best hit candidate ahead of time
 
-		traceBVH(bvh, bvh[nodeid].right, marchCount, closestHit, rayOrigin, rayDir, invRayDir);
-		traceBVH(bvh, bvh[nodeid].left, marchCount, closestHit, rayOrigin, rayDir, invRayDir);
+		traceBVH(bvh, bvh[nodeid].left, marchCount, closestHit, rayOrigin, hitID, rayDir, invRayDir);
+		traceBVH(bvh, bvh[nodeid].right, marchCount, closestHit, rayOrigin, hitID, rayDir, invRayDir);
 	}
 }
 
@@ -147,8 +150,8 @@ SVec128 RayDirection(float fieldOfView, float fragCoordX, float fragCoordY)
 	float height = 1080.f;
     float x = fragCoordX - width/2.f;
     float y = fragCoordY - height/2.f;
-    float z = height / tanf((fieldOfView*M_PI/180.f)/2.0);
-    return EVecMul(EVecNorm3(EVecConst(x,y,-z,1.f)), EVecConst(64.f,64.f,64.f,1.f));
+    float z = height / tanf((fieldOfView*M_PI/180.f)/2.f);
+    return EVecNorm3(EVecConst(x,y,-z,1.f));
 }
 
 int main(int _argc, char** _argv)
@@ -181,10 +184,13 @@ int main(int _argc, char** _argv)
 		return 1;
 	}
 
+	uint32 width = 640;
+	uint32 height = 480;
+
     SDL_Window *screen = SDL_CreateWindow("BVH8Tool",
             SDL_WINDOWPOS_UNDEFINED,
             SDL_WINDOWPOS_UNDEFINED,
-            1920, 1080, 0);
+            width, height, 0);
 
     if(!screen)
 	{
@@ -207,9 +213,6 @@ int main(int _argc, char** _argv)
 
 	bool done = false;
 
-	float fov = 60.f;
-	float imageAspectRatio = 1920.f / 1080.f; // width > height
-
 	do{
 		SDL_UpdateWindowSurface(screen);
 		SDL_Event event;
@@ -223,48 +226,53 @@ int main(int _argc, char** _argv)
 			SDL_LockSurface(surface);
 		
 		static float rotAng = 0.f;
-		rotAng += 0.01f;
+		float aspect = float(height) / float(width);
+
+		SVec128 rayOrigin{sinf(rotAng)*30.f,30.f,cosf(rotAng)*30.f,1.f};
+		SVec128 lookAt{0.f,0.f,0.f,1.f};
+		SVec128 upVec{0.f,1.f,0.f,0.f};
+		SMatrix4x4 lookMat = EMatLookAtRightHanded(rayOrigin, lookAt, upVec);
+		SVec128 pzVec{-1.f,-1.f,-1.f,0.f};
+		SVec128 F = EVecMul(lookMat.r[2], pzVec);
 
 		uint8_t* pixels = (uint8_t*)surface->pixels;
-		for (int y=0; y<1080; ++y)
+		for (int y=0; y<height; ++y)
 		{
-			for (int x=0; x<1920; ++x)
+			float py = aspect * (float(height)/2.f-float(y))/float(height);
+			SVec128 pyVec{py,py,py,0.f};
+			SVec128 U = EVecMul(lookMat.r[1], pyVec);
+			for (int x=0; x<width; ++x)
 			{
-				// Stationary camera
-				SVec128 rayOrigin{0.f,0.f,30.f,0.f};
-
-				// Rotate around world origin at 30 units distance
-				//SVec128 rayOrigin{cosf(rotAng)*30.f,0.f,sinf(rotAng)*30.f,0.f};
-				//SMatrix4x4 lookAt = EMatLookAtRightHanded(rayOrigin, EVecConst(0.f,0.f,0.f,0.f), EVecConst(0,1,0,0));
-
-				// Look towards the scene
-				SVec128 rayDir = RayDirection(60.f, float(x), float(1080-y));
-				SVec128 invRayDir = EVecRcp(rayDir);
-
-				// Rotate look direction to align with camera
-				//SVec128 rotDir = EVecTransform3(lookAt, rayDir);
-				//SVec128 invRayDir = EVecRcp(rotDir);
+				// Rotating camera
+				float px = (float(x) - float(width)/2.f)/float(width);
+				SVec128 pxVec{px,px,px,0.f};
+				SVec128 L = EVecMul(lookMat.r[0], pxVec);
+				SVec128 traceRay = EVecAdd(EVecAdd(L, U), F);
+				SVec128 invRay = EVecRcp(traceRay);
 
 				// Trace and return hit depth
 				float closestHit = 64.f;
 				uint32 marchCount = 0;
-				traceBVH(bvh, 0, marchCount, closestHit, rayOrigin, /*rotDir*/rayDir, invRayDir);
+				uint32 hitID = 0;
+				traceBVH(bvh, 0, marchCount, closestHit, rayOrigin, hitID, traceRay, invRay);
 
-				if (closestHit<64.f)
+				if (closestHit<64.f) // Actual hit
 				{
-					pixels[(x+y*1920)*4+0] = int(closestHit*255.f);
-					pixels[(x+y*1920)*4+1] = marchCount*8;
-					pixels[(x+y*1920)*4+2] = 0;
+					pixels[(x+y*width)*4+0] = 8<<(hitID%16);
+					pixels[(x+y*width)*4+1] = 16<<(hitID%16);
+					pixels[(x+y*width)*4+2] = 32<<(hitID%16);
 				}
 				else
 				{
-					pixels[(x+y*1920)*4+0] = 0;
-					pixels[(x+y*1920)*4+1] = marchCount*8;
-					pixels[(x+y*1920)*4+2] = 0;
+					pixels[(x+y*width)*4+0] = 0;
+					pixels[(x+y*width)*4+1] = 0;
+					pixels[(x+y*width)*4+2] = 0;
 				}
-				pixels[(x+y*1920)*4+3] = 0xFF;
+				pixels[(x+y*width)*4+3] = 0xFF;
 			}
 		}
+
+		rotAng += 0.01f;
 
 		if (SDL_MUSTLOCK(surface))
 			SDL_UnlockSurface(surface);

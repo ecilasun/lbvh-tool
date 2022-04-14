@@ -34,7 +34,8 @@ def build(bld):
     # RELEASE
     sdk_lib_path = []
     libs = ['SDL2']
-    compile_flags = ['-O0', '-std=c++17', '-g', '-msse4.1']
+    #compile_flags = ['-O0', '-std=c++17', '-g', '-msse4.1']
+    compile_flags = ['-Ofast', '-std=c++17', '-msse4.1']
     linker_flags = []
 
     # Build risctool
