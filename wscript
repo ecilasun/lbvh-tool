@@ -29,7 +29,7 @@ def build(bld):
         platform_defines = ['_CRT_SECURE_NO_WARNINGS', 'PLATFORM_WINDOWS', 'LBVH_NO_THREADS']
     else:
         platform_defines = ['_CRT_SECURE_NO_WARNINGS', 'PLATFORM_LINUX', 'LBVH_NO_THREADS']
-    includes = ['source', 'includes']
+    includes = ['source', 'includes', '/usr/include/SDL2']
 
     # RELEASE
     sdk_lib_path = []
