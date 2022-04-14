@@ -12,7 +12,7 @@
 			"program": "${workspaceFolder}/build/release/bvh8tool",
 			"args": ["-exec set output-radix 16"],
 			"stopAtEntry": false,
-			"cwd": "${fileDirname}",
+			"cwd": "${workspaceFolder}",
 			"environment": [],
 			"externalConsole": false,
 			"MIMode": "gdb",
