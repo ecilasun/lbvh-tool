@@ -5,6 +5,8 @@
 
 #include "SDL2/SDL.h"
 
+//#define USE_SMALL_DATA_SET
+
 // Utilizes code from https://github.com/jimbok8/lbvh-1 by Taylor Holberton and contributors
 
 struct triangle final {
@@ -19,15 +21,17 @@ uint32 width = 1280;
 uint32 height = 960;
 
 uint8_t* pixels;
-triangle *testtris;
-
-/*triangle testtris[3] = {
+#ifdef USE_SMALL_DATA_SET
+triangle testtris[3] = {
 	// Floor plane
 	{-3,-3,-3, 3,-3,5, 3,-3,-3},
 	{-3,-3,-3, -3,-3,5, 3,-3,5},
 	// Single tri facing forward
 	{0,4,2, 0,-9,2, 2,-9,2},
-};*/
+};
+#else
+triangle *testtris;
+#endif
 
 void dumpNodes(lbvh::bvh<float> &bvh, uint32 node)
 {
@@ -145,12 +149,13 @@ void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float&
 			// NOTE: This is easily solvable for BVH8 with a ray octant mask
 			// In this case we'll need to check for the 'nearest' hit somehow
 			// or know which node is the best hit candidate ahead of time
-
-			traceBVH(bvh, bvh[nodeid].left, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
-			traceBVH(bvh, bvh[nodeid].right, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
-
-			// If either are missed, bring 't' closer
-			//t = EMinimum(t, EVecGetFloatX(EVecLen3(EVecSub(rayOrigin, exitpos))));
+			SVec128 delta = EVecSub(isect, rayOrigin);
+			float vlen = EVecGetFloatX(EVecLen3(delta));
+			if(t > vlen) // current ray is further than this cell, take it
+			{
+				traceBVH(bvh, bvh[nodeid].left, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
+				traceBVH(bvh, bvh[nodeid].right, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
+			}
 		}
 	}
 }
@@ -169,6 +174,7 @@ void block(int x, int y, uint8_t B, uint8_t G, uint8_t R)
 
 int main(int _argc, char** _argv)
 {
+#ifndef USE_SMALL_DATA_SET
 	objl::Loader objloader;
 	if (!objloader.LoadFile("test.obj"))
 	{
@@ -178,7 +184,7 @@ int main(int _argc, char** _argv)
 
 	// Set up triangle data
 	int t=0;
-	int totaltriangles = 0; // 3
+	int totaltriangles = 0;
 
 	for (auto &mesh : objloader.LoadedMeshes)
 		totaltriangles += int(mesh.Indices.size()/3);
@@ -214,6 +220,7 @@ int main(int _argc, char** _argv)
 			++t;
 		}
 	}
+#endif
 
 	auto tri_to_box = [](const triangle& s) -> lbvh::aabb<float> {
 		float minx = FLT_MAX, miny = FLT_MAX, minz = FLT_MAX;
@@ -234,6 +241,9 @@ int main(int _argc, char** _argv)
 	};
 
 	lbvh::builder<float> builder;
+#ifdef USE_SMALL_DATA_SET
+	int totaltriangles = 3;
+#endif
 	auto bvh = builder(testtris, totaltriangles, tri_to_box);
 
 	/*dumpNodes(bvh, 0);
@@ -295,6 +305,7 @@ int main(int _argc, char** _argv)
 		SVec128 F = EVecMul(lookMat.r[2], pzVec);
 
 		pixels = (uint8_t*)surface->pixels;
+		uint32 maxTraces = 0;
 		for (int y=0; y<height; y+=4)
 		{
 			float py = aspect * (float(height)/2.f-float(y))/float(height);
@@ -314,6 +325,7 @@ int main(int _argc, char** _argv)
 				uint32 marchCount = 0;
 				uint32 hitID = 0;
 				traceBVH(bvh, 0, marchCount, t, rayOrigin, hitID, traceRay, invRay);
+				maxTraces = EMaximum(maxTraces, marchCount);
 
 				SVec128 hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t-0.01f,t-0.01f,t-0.01f,1.f)));
 
@@ -323,17 +335,17 @@ int main(int _argc, char** _argv)
 				//int hY = int(EVecGetFloatY(hitpos)*100.f);
 				//int hZ = int(EVecGetFloatZ(hitpos)*100.f);
 				//block(x,y, C, C, C);
-				//block(x,y, C, ((hitID>>1)%4)*32, ((hitID>>2)%8)*32);
+				//block(x,y, /*((hitID>>1)%2)*128*/marchCount, ((hitID>>1)%4)*64, ((hitID>>2)%8)*32);
 
-				SVec128 sunPos{20.f,35.f,20.f,1.f};
+				SVec128 sunPos{20.f,sinf(rotAng)*35.f,20.f,1.f};
 				SVec128 sunRay = EVecSub(sunPos, hitpos);
 				SVec128 invSunRay = EVecRcp(sunRay);
-				float t2 = 512.f;
+				float t2 = 64.f;
 				traceBVH(bvh, 0, marchCount, t2, hitpos, hitID, sunRay, invSunRay);
 				float sunlen = EVecGetFloatX(EVecLen3(sunRay));
 				if (t2<sunlen)
 				{
-					float D = fabs(t2-sunlen)/8.f;
+					float D = fabs(t2-sunlen);
 					int C = int(D);
 					block(x,y, C, C, C);
 				}
@@ -345,6 +357,8 @@ int main(int _argc, char** _argv)
 				}
 			}
 		}
+
+		printf("MaxTraces: %d\n", maxTraces);
 
 		rotAng += 0.02f;
 
