@@ -146,8 +146,8 @@ void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float&
 			// In this case we'll need to check for the 'nearest' hit somehow
 			// or know which node is the best hit candidate ahead of time
 
-			traceBVH(bvh, bvh[nodeid].right, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
 			traceBVH(bvh, bvh[nodeid].left, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
+			traceBVH(bvh, bvh[nodeid].right, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
 
 			// If either are missed, bring 't' closer
 			//t = EMinimum(t, EVecGetFloatX(EVecLen3(EVecSub(rayOrigin, exitpos))));
@@ -310,18 +310,39 @@ int main(int _argc, char** _argv)
 				SVec128 invRay = EVecRcp(traceRay);
 
 				// Trace and return hit depth
-				float t = 64.f;
+				float t = 128.f;
 				uint32 marchCount = 0;
 				uint32 hitID = 0;
 				traceBVH(bvh, 0, marchCount, t, rayOrigin, hitID, traceRay, invRay);
 
-				SVec128 hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t,t,t,1.f)));
+				SVec128 hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t-0.01f,t-0.01f,t-0.01f,1.f)));
 
-				float D = t<64.f ? EVecGetFloatX(EVecLen3(EVecSub(hitpos, rayOrigin)))/16.f : 0.f;//(t<64.f?t:0.f)/16.f;
-				int C = int(D*255.f);
+				/*float D = (t<128.f?t:0.f)/16.f;
+				int C = int(D*255.f);*/
+				//int hX = int(EVecGetFloatX(hitpos)*100.f);
+				//int hY = int(EVecGetFloatY(hitpos)*100.f);
+				//int hZ = int(EVecGetFloatZ(hitpos)*100.f);
+				//block(x,y, C, C, C);
+				//block(x,y, C, ((hitID>>1)%4)*32, ((hitID>>2)%8)*32);
 
-				block(x,y, C, ((hitID>>1)%4)*32, ((hitID>>2)%8)*32);
-				//block(x,y, hitID, 0, marchCount);
+				SVec128 sunPos{20.f,35.f,20.f,1.f};
+				SVec128 sunRay = EVecSub(sunPos, hitpos);
+				SVec128 invSunRay = EVecRcp(sunRay);
+				float t2 = 512.f;
+				traceBVH(bvh, 0, marchCount, t2, hitpos, hitID, sunRay, invSunRay);
+				float sunlen = EVecGetFloatX(EVecLen3(sunRay));
+				if (t2<sunlen)
+				{
+					float D = fabs(t2-sunlen)/8.f;
+					int C = int(D);
+					block(x,y, C, C, C);
+				}
+				else
+				{
+					float D = EVecGetFloatX(EVecLen3(hitpos));
+					int C = int(D*16.f);
+					block(x,y, C, C, C);
+				}
 			}
 		}
 
