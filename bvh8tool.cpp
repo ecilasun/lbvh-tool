@@ -10,7 +10,8 @@
 // Utilizes code from https://github.com/jimbok8/lbvh-1 by Taylor Holberton and contributors
 
 struct triangle final {
-  float coords[9];
+  SVec128 coords[3];
+  SVec128 normals[3];
 };
 
 struct hitinfo final {
@@ -24,37 +25,13 @@ uint8_t* pixels;
 #ifdef USE_SMALL_DATA_SET
 triangle testtris[3] = {
 	// Floor plane
-	{-3,-3,-3, 3,-3,5, 3,-3,-3},
-	{-3,-3,-3, -3,-3,5, 3,-3,5},
+	SVec128{-3,-3,-3,0.f}, SVec128{3,-3,5,0.f}, SVec128{3,-3,-3,0.f},
+	SVec128{-3,-3,-3,0.f}, SVec128{-3,-3,5,0.f}, SVec128{3,-3,5,0.f},
 	// Single tri facing forward
-	{0,4,2, 0,-9,2, 2,-9,2},
-};
+	SVec128{0,4,2,0.f}, SVec128{0,-9,2,0.f}, SVec128{2,-9,2,0.f} };
 #else
 triangle *testtris;
 #endif
-
-void dumpNodes(lbvh::bvh<float> &bvh, uint32 node)
-{
-	auto nb = bvh[node];
-
-	printf("(%d)->", node);
-
-	if (nb.left&0x80000000)
-		printf("(L v0:%f,%f,%f v1:%f,%f,%f v2:%f,%f,%f)\n",
-			testtris[node].coords[0],testtris[node].coords[1],testtris[node].coords[2],
-			testtris[node].coords[3],testtris[node].coords[4],testtris[node].coords[5],
-			testtris[node].coords[6],testtris[node].coords[7],testtris[node].coords[8]); // left leads to leaf node
-	else
-		dumpNodes(bvh, nb.left); // left leads to an internal node
-
-	if (nb.right&0x80000000)
-		printf("(R v0:%f,%f,%f v1:%f,%f,%f v2:%f,%f,%f)\n",
-			testtris[node].coords[0],testtris[node].coords[1],testtris[node].coords[2],
-			testtris[node].coords[3],testtris[node].coords[4],testtris[node].coords[5],
-			testtris[node].coords[6],testtris[node].coords[7],testtris[node].coords[8]); // right leads to leaf node
-	else
-		dumpNodes(bvh, nb.right); // right leads to an internal node
-}
 
 void Barycentrics(SVec128& P, SVec128& v1, SVec128& v2, SVec128& v3, SVec128& uvw)
 {
@@ -120,18 +97,15 @@ bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVe
 
 void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float& t, SVec128& rayOrigin, uint32& hitID, SVec128& rayDir, SVec128& invRayDir)
 {
-	uint nodeid = rootnode&0x7FFFFFFF;
 	marchCount++;
+	uint nodeid = rootnode&0x7FFFFFFF;
 
 	if (rootnode&0x80000000) // This is a leaf node, do a triangle test
 	{
-		SVec128 v0{testtris[nodeid].coords[0], testtris[nodeid].coords[1], testtris[nodeid].coords[2],0.f};
-		SVec128 v1{testtris[nodeid].coords[3], testtris[nodeid].coords[4], testtris[nodeid].coords[5],0.f};
-		SVec128 v2{testtris[nodeid].coords[6], testtris[nodeid].coords[7], testtris[nodeid].coords[8],0.f};
-		float hitT = TriHit(rayOrigin, rayDir, v0, v1, v2, 512.f);
+		float hitT = TriHit(rayOrigin, rayDir, testtris[nodeid].coords[0], testtris[nodeid].coords[1], testtris[nodeid].coords[2], t+1.f);
 
-		// Closer than closest hit?
-		if (hitT < t && hitT > 0.f)
+		// Closer than closest hit and not missed
+		if (hitT < t)
 		{
 			t = hitT;
 			hitID = nodeid;
@@ -139,6 +113,9 @@ void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float&
 	}
 	else
 	{
+		/*if (hitID!=0xFFFFFFFF) // ANY_HIT: return as soon as we have a triangle
+			return;*/
+
 		SVec128 p0{bvh[nodeid].box.min.x, bvh[nodeid].box.min.y, bvh[nodeid].box.min.z, 0.f};
 		SVec128 p1{bvh[nodeid].box.max.x, bvh[nodeid].box.max.y, bvh[nodeid].box.max.z, 0.f};
 
@@ -151,7 +128,9 @@ void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float&
 			// or know which node is the best hit candidate ahead of time
 			SVec128 delta = EVecSub(isect, rayOrigin);
 			float vlen = EVecGetFloatX(EVecLen3(delta));
-			if(t > vlen) // current ray is further than this cell, take it
+
+			// Current ray is further than this cell, take the branch
+			if(t > vlen) // CLOSEST_HIT: find the hit position closest to the ray origin (i.e. minimum t)
 			{
 				traceBVH(bvh, bvh[nodeid].left, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
 				traceBVH(bvh, bvh[nodeid].right, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
@@ -199,23 +178,21 @@ int main(int _argc, char** _argv)
 
 	for (auto &mesh : objloader.LoadedMeshes)
 	{
-		for (int i=0;i<mesh.Indices.size()/3;++i)
+		int triCount = mesh.Indices.size()/3;
+		for (int i=0;i<triCount;++i)
 		{
-			unsigned int i0 = mesh.Indices[i*3+0];
-			unsigned int i1 = mesh.Indices[i*3+1];
-			unsigned int i2 = mesh.Indices[i*3+2];
+			int tri = i*3;
+			unsigned int i0 = mesh.Indices[tri+0];
+			unsigned int i1 = mesh.Indices[tri+1];
+			unsigned int i2 = mesh.Indices[tri+2];
 
-			testtris[t].coords[0] = mesh.Vertices[i0].Position.X;
-			testtris[t].coords[1] = mesh.Vertices[i0].Position.Y;
-			testtris[t].coords[2] = mesh.Vertices[i0].Position.Z;
+			testtris[t].coords[0] = EVecConst( mesh.Vertices[i0].Position.X, mesh.Vertices[i0].Position.Y, mesh.Vertices[i0].Position.Z, 0.f);
+			testtris[t].coords[1] = EVecConst( mesh.Vertices[i1].Position.X, mesh.Vertices[i1].Position.Y, mesh.Vertices[i1].Position.Z, 0.f);
+			testtris[t].coords[2] = EVecConst( mesh.Vertices[i2].Position.X, mesh.Vertices[i2].Position.Y, mesh.Vertices[i2].Position.Z, 0.f);
 
-			testtris[t].coords[3] = mesh.Vertices[i1].Position.X;
-			testtris[t].coords[4] = mesh.Vertices[i1].Position.Y;
-			testtris[t].coords[5] = mesh.Vertices[i1].Position.Z;
-
-			testtris[t].coords[6] = mesh.Vertices[i2].Position.X;
-			testtris[t].coords[7] = mesh.Vertices[i2].Position.Y;
-			testtris[t].coords[8] = mesh.Vertices[i2].Position.Z;
+			testtris[t].normals[0] = EVecConst( mesh.Vertices[i0].Normal.X, mesh.Vertices[i0].Normal.Y, mesh.Vertices[i0].Normal.Z, 0.f);
+			testtris[t].normals[1] = EVecConst( mesh.Vertices[i1].Normal.X, mesh.Vertices[i1].Normal.Y, mesh.Vertices[i1].Normal.Z, 0.f);
+			testtris[t].normals[2] = EVecConst( mesh.Vertices[i2].Normal.X, mesh.Vertices[i2].Normal.Y, mesh.Vertices[i2].Normal.Z, 0.f);
 
 			++t;
 		}
@@ -223,31 +200,32 @@ int main(int _argc, char** _argv)
 #endif
 
 	auto tri_to_box = [](const triangle& s) -> lbvh::aabb<float> {
-		float minx = FLT_MAX, miny = FLT_MAX, minz = FLT_MAX;
-		float maxx = -FLT_MAX, maxy = -FLT_MAX, maxz = -FLT_MAX;
-		for (int i=0;i<3;++i)
-		{
-			float X = s.coords[i*3+0];
-			float Y = s.coords[i*3+1];
-			float Z = s.coords[i*3+2];
-			minx = EMinimum(minx, X);
-			miny = EMinimum(miny, Y);
-			minz = EMinimum(minz, Z);
-			maxx = EMaximum(maxx, X);
-			maxy = EMaximum(maxy, Y);
-			maxz = EMaximum(maxz, Z);
-		}
+		SVec128 fmin = {FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX};
+		SVec128 fmax = {-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX};
+
+		fmin = EVecMin(fmin, s.coords[0]);
+		fmin = EVecMin(fmin, s.coords[1]);
+		fmin = EVecMin(fmin, s.coords[2]);
+		fmax = EVecMax(fmax, s.coords[0]);
+		fmax = EVecMax(fmax, s.coords[1]);
+		fmax = EVecMax(fmax, s.coords[2]);
+
+		float minx = EVecGetFloatX(fmin);
+		float miny = EVecGetFloatY(fmin);
+		float minz = EVecGetFloatZ(fmin);
+		float maxx = EVecGetFloatX(fmax);
+		float maxy = EVecGetFloatY(fmax);
+		float maxz = EVecGetFloatZ(fmax);
+
 		return lbvh::aabb<float> { {minx, miny, minz}, {maxx, maxy, maxz} };
 	};
 
-	lbvh::builder<float> builder;
 #ifdef USE_SMALL_DATA_SET
 	int totaltriangles = 3;
 #endif
-	auto bvh = builder(testtris, totaltriangles, tri_to_box);
 
-	/*dumpNodes(bvh, 0);
-	printf("\n");*/
+	lbvh::builder<float> builder;
+	auto bvh = builder(testtris, totaltriangles, tri_to_box);
 
 	// Trace the BVH
 	if(SDL_Init(SDL_INIT_VIDEO) != 0)
@@ -282,6 +260,8 @@ int main(int _argc, char** _argv)
 
 	bool done = false;
 	const float cameradistance = 20.f;
+	uint32 lowTraces = 0xFFFFFFFF;
+	uint32 highTraces = 0x00000000;
 
 	do{
 		SDL_Event event;
@@ -306,6 +286,7 @@ int main(int _argc, char** _argv)
 
 		pixels = (uint8_t*)surface->pixels;
 		uint32 maxTraces = 0;
+		SVec128 nil{0.f,0.f,0.f,0.f};
 		for (int y=0; y<height; y+=4)
 		{
 			float py = aspect * (float(height)/2.f-float(y))/float(height);
@@ -320,45 +301,65 @@ int main(int _argc, char** _argv)
 				SVec128 traceRay = EVecAdd(EVecAdd(L, U), F);
 				SVec128 invRay = EVecRcp(traceRay);
 
-				// Trace and return hit depth
-				float t = 128.f;
+				// Scene
+				float t = cameradistance*2.f;
 				uint32 marchCount = 0;
-				uint32 hitID = 0;
+				uint32 hitID = 0xFFFFFFFF;
 				traceBVH(bvh, 0, marchCount, t, rayOrigin, hitID, traceRay, invRay);
 				maxTraces = EMaximum(maxTraces, marchCount);
 
-				SVec128 hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t-0.01f,t-0.01f,t-0.01f,1.f)));
-
-				/*float D = (t<128.f?t:0.f)/16.f;
-				int C = int(D*255.f);*/
-				//int hX = int(EVecGetFloatX(hitpos)*100.f);
-				//int hY = int(EVecGetFloatY(hitpos)*100.f);
-				//int hZ = int(EVecGetFloatZ(hitpos)*100.f);
-				//block(x,y, C, C, C);
-				//block(x,y, /*((hitID>>1)%2)*128*/marchCount, ((hitID>>1)%4)*64, ((hitID>>2)%8)*32);
-
-				SVec128 sunPos{20.f,sinf(rotAng)*35.f,20.f,1.f};
-				SVec128 sunRay = EVecSub(sunPos, hitpos);
-				SVec128 invSunRay = EVecRcp(sunRay);
-				float t2 = 64.f;
-				traceBVH(bvh, 0, marchCount, t2, hitpos, hitID, sunRay, invSunRay);
-				float sunlen = EVecGetFloatX(EVecLen3(sunRay));
-				if (t2<sunlen)
+				if (hitID!=0xFFFFFFFF) // HAVE_HIT: Ray hit a primitive in a leaf nodes
 				{
-					float D = fabs(t2-sunlen);
-					int C = int(D);
-					block(x,y, C, C, C);
+					// Hit position
+					SVec128 hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t-0.01f,t-0.01f,t-0.01f,1.f)));
+					// Barycentric coortinates for attribute interpolation
+					SVec128 uvw;
+					Barycentrics(hitpos, testtris[hitID].coords[0], testtris[hitID].coords[1], testtris[hitID].coords[2], uvw);
+					block(x,y, ((hitID>>1)%2)*128, ((hitID>>1)%4)*64, ((hitID>>2)%8)*32);
 				}
 				else
 				{
-					float D = EVecGetFloatX(EVecLen3(hitpos));
-					int C = int(D*16.f);
-					block(x,y, C, C, C);
+					block(x,y, 0,0,0);
 				}
+				// X-Ray view
+				//block(x,y, marchCount, marchCount, marchCount);
+
+				// Shadow
+				/*if (hitID!=0xFFFFFFFF)
+				{
+					float D = (t<128.f?t:0.f)/16.f;
+					int C = int(D*255.f);*/
+					//int hX = int(EVecGetFloatX(hitpos)*100.f);
+					//int hY = int(EVecGetFloatY(hitpos)*100.f);
+					//int hZ = int(EVecGetFloatZ(hitpos)*100.f);
+					//block(x,y, C, C, C);
+
+					/*SVec128 sunPos{20.f,35.f,sinf(rotAng*4.f)*20.f,1.f};
+					SVec128 sunRay = EVecSub(sunPos, hitpos);
+					SVec128 invSunRay = EVecRcp(sunRay);
+					float t2 = 64.f;
+					hitID = 0xFFFFFFFF;
+					traceBVH(bvh, 0, marchCount, t2, hitpos, hitID, sunRay, invSunRay);
+					float sunlen = EVecGetFloatX(EVecLen3(sunRay));
+					if (t2<sunlen)
+					{
+						float D = fabs(t2-sunlen);
+						int C = int(D);
+						block(x,y, C, C, C);
+					}
+					else
+					{
+						float D = EVecGetFloatX(EVecLen3(hitpos));
+						int C = int(D*16.f);
+						block(x,y, C, C, C);
+					}
+				}*/
 			}
 		}
 
-		printf("MaxTraces: %d\n", maxTraces);
+		lowTraces = EMinimum(maxTraces, lowTraces);
+		highTraces = EMaximum(maxTraces, highTraces);
+		printf("MaxTraces: %d Highest: %d Lowest: %d\n", maxTraces, highTraces, lowTraces);
 
 		rotAng += 0.02f;
 
