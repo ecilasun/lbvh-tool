@@ -1,13 +1,21 @@
 #include <stdio.h>
 #include "math.h"
 #include "lbvh.h"
+#include "bvh8.h"
 #include "objloader.h"
 
 #include "SDL2/SDL.h"
 
-//#define USE_SMALL_DATA_SET
+#define MAX_NODE_TRIS 8
+#define MAX_STACK_ENTRIES 24
 
-// Utilizes code from https://github.com/jimbok8/lbvh-1 by Taylor Holberton and contributors
+// NOTE: This structure is very expensive for E32E, a data reduction method has to be applied here.
+// One approach could be to only stash connected triangle fans here.
+struct BVH8LeafNode
+{
+	uint32 m_numTriangles{0};
+	uint32 m_triangleIndices[MAX_NODE_TRIS]{};
+};
 
 struct triangle final {
   SVec128 coords[3];
@@ -22,16 +30,97 @@ uint32 width = 1280;
 uint32 height = 960;
 
 uint8_t* pixels;
-#ifdef USE_SMALL_DATA_SET
-triangle testtris[3] = {
-	// Floor plane
-	SVec128{-3,-3,-3,0.f}, SVec128{3,-3,5,0.f}, SVec128{3,-3,-3,0.f},
-	SVec128{-3,-3,-3,0.f}, SVec128{-3,-3,5,0.f}, SVec128{3,-3,5,0.f},
-	// Single tri facing forward
-	SVec128{0,4,2,0.f}, SVec128{0,-9,2,0.f}, SVec128{2,-9,2,0.f} };
-#else
 triangle *testtris;
-#endif
+
+SBVH8Database<BVH8LeafNode>* testBVH8;
+
+void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH8LeafNode>* _bvh8)
+{
+	SVec128 sceneMin{FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX};
+	SVec128 sceneMax{-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX};
+
+	// Generate scene AABB
+	for (uint32_t i = 0; i < _numTriangles; ++i)
+	{
+		sceneMin = EVecMin(sceneMin, _triangles[i].coords[0]);
+		sceneMin = EVecMin(sceneMin, _triangles[i].coords[1]);
+		sceneMin = EVecMin(sceneMin, _triangles[i].coords[2]);
+
+		sceneMax = EVecMax(sceneMax, _triangles[i].coords[0]);
+		sceneMax = EVecMax(sceneMax, _triangles[i].coords[1]);
+		sceneMax = EVecMax(sceneMax, _triangles[i].coords[2]);
+	}
+
+	// Set up grid bounds and cell scale
+	_bvh8->m_GridAABBMin = sceneMin;
+	_bvh8->m_GridCellSize = SVec128{1.f,1.f,1.f,0.f};
+
+	// Get scene span in cell units
+	uint32 gridMin[3], gridMax[3];
+	_bvh8->QuantizePosition(sceneMin, gridMin);
+	_bvh8->QuantizePosition(sceneMax, gridMax);
+
+	// Scan the grid for intersecting triangles per cell
+	for (int z = gridMin[2]; z < gridMax[2]; ++z)
+	for (int y = gridMin[1]; y < gridMax[1]; ++y)
+	for (int x = gridMin[0]; x < gridMax[0]; ++x)
+	{
+		uint32_t spatialKey = _bvh8->EncodeKey(x, y, z);
+
+		// World bounds of this cell
+		SVec128 cellMin = EVecConvertIntToFloat(EVecConsti(x,y,z,0));
+		SVec128 cellMax = EVecConvertIntToFloat(EVecConsti(x+1,y+1,z+1,0));
+
+		uint32_t keyIndex;
+		uint32_t dataIndex = _bvh8->FindCell(spatialKey, keyIndex);
+
+		for (uint32_t i = 0; i < _numTriangles; ++i)
+		{
+			SVec128 triMin{FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX};
+			SVec128 triMax{-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX};
+
+			triMin = EVecMin(triMin, _triangles[i].coords[0]);
+			triMin = EVecMin(triMin, _triangles[i].coords[1]);
+			triMin = EVecMin(triMin, _triangles[i].coords[2]);
+
+			triMax = EVecMax(triMax, _triangles[i].coords[0]);
+			triMax = EVecMax(triMax, _triangles[i].coords[1]);
+			triMax = EVecMax(triMax, _triangles[i].coords[2]);
+
+			uint32 elementMin[3], elementMax[3];
+			_bvh8->QuantizePosition(triMin, elementMin);
+			_bvh8->QuantizePosition(triMax, elementMax);
+
+			if (x>=elementMin[0] && x<=elementMax[0] && y>=elementMin[1] && y<=elementMax[1] && z>=elementMin[2] && z<=elementMax[2])
+			{
+				BVH8LeafNode *leaf;
+				// Add a new data entry if there's nothing here yet
+				if (dataIndex == BVH8IllegalIndex)
+					leaf = _bvh8->Append(spatialKey, dataIndex, keyIndex);
+				else // Otherwise grab the existing data
+					leaf = &_bvh8->m_data[dataIndex];
+
+				// Append new primitive to the cell only if we're not going overboard
+				if (leaf->m_numTriangles < MAX_NODE_TRIS)
+				{
+					// Expand current min/max
+					SVec128 exMin = EVecMin(_bvh8->m_dataLookup[keyIndex].m_BoundsMin, triMin);
+					SVec128 exMax = EVecMax(_bvh8->m_dataLookup[keyIndex].m_BoundsMax, triMax);
+					// Clip to maximum cell bounds
+					_bvh8->m_dataLookup[keyIndex].m_BoundsMin = exMin;//EVecMax(cellMin, exMin);
+					_bvh8->m_dataLookup[keyIndex].m_BoundsMax = exMax;//EVecMin(cellMax, exMax);
+
+					// Append new triangle index
+					leaf->m_triangleIndices[leaf->m_numTriangles] = i;
+					leaf->m_numTriangles++;
+				}
+			}
+		}
+	}
+
+	_bvh8->SortAscending(0, _bvh8->m_dataLookup.size());
+	_bvh8->GenerateBVH8();
+}
 
 void Barycentrics(SVec128& P, SVec128& v1, SVec128& v2, SVec128& v3, SVec128& uvw)
 {
@@ -81,6 +170,16 @@ float TriHit(SVec128& origin, SVec128& direction, SVec128& v1, SVec128& v2, SVec
 		return ftemp; // Hit
 }
 
+bool SlabTestFast(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVec128& invRayDir)
+{
+	SVec128 t0 = EVecMul(EVecSub(p0, rayOrigin), invRayDir);
+	SVec128 t1 = EVecMul(EVecSub(p1, rayOrigin), invRayDir);
+	SVec128 tmin = EVecMin(t0, t1);
+	SVec128 tmax = EVecMax(t0, t1);
+	float enter = EVecMaxComponent3(tmin);
+	float exit = EVecMinComponent3(tmax);
+	return enter <= exit;
+}
 
 bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVec128& invRayDir, SVec128& isect, SVec128& exitpos)
 {
@@ -95,7 +194,7 @@ bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVe
 	return enter <= exit;
 }
 
-void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float& t, SVec128& rayOrigin, uint32& hitID, SVec128& rayDir, SVec128& invRayDir)
+void traceLBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float& t, SVec128& rayOrigin, uint32& hitID, SVec128& rayDir, SVec128& invRayDir)
 {
 	marchCount++;
 	uint nodeid = rootnode&0x7FFFFFFF;
@@ -132,11 +231,143 @@ void traceBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float&
 			// Current ray is further than this cell, take the branch
 			if(t > vlen) // CLOSEST_HIT: find the hit position closest to the ray origin (i.e. minimum t)
 			{
-				traceBVH(bvh, bvh[nodeid].left, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
-				traceBVH(bvh, bvh[nodeid].right, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
+				traceLBVH(bvh, bvh[nodeid].left, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
+				traceLBVH(bvh, bvh[nodeid].right, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
 			}
 		}
 	}
+}
+
+uint32 GatherChildNodes(SBVH8Database<BVH8LeafNode>* bvh, uint32 rootNode, SVec128 startPos, uint32 rayOctantMask, SVec128 deltaVec, SVec128 invDeltaVec, uint32* hitcells)
+{
+	uint32 octantallocationmask = 0;
+
+	// Generate octant allocation mask and store items in hit order (search on caller side will be in reverse bit scan order, i.e. from MSB to LSB)
+	uint32 childcount = bvh->m_dataLookup[rootNode].m_ChildCount;
+	uint32 firstChildNode = bvh->m_dataLookup[rootNode].m_DataIndex;
+	for (uint32 i = 0; i < childcount; ++i)
+	{
+		uint32 idx = firstChildNode + i;
+		SVec128 subminbounds = bvh->m_dataLookup[idx].m_BoundsMin;
+		SVec128 submaxbounds = bvh->m_dataLookup[idx].m_BoundsMax;
+		if (SlabTestFast(subminbounds, submaxbounds, startPos, deltaVec, invDeltaVec))
+		{
+			uint32 byoctant = (bvh->m_dataLookup[idx].m_SpatialKey & 0x00000007) ^ rayOctantMask;
+			hitcells[byoctant] = idx;
+			octantallocationmask |= (1 << byoctant);
+		}
+	}
+
+	return octantallocationmask;
+}
+
+EInline int32 BitCountLeadingZeroes32(uint32 x)
+{
+	#if defined(PLATFORM_WINDOWS)
+		return __lzcnt(x);
+	#else
+		return x ? __builtin_clz(x) : 32;
+	#endif
+}
+
+int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32& marchCount, float& t, SVec128& startPos, uint32& hitID, SVec128& deltaVec, SVec128& invDeltaVec, SVec128& hitPos)
+{
+	uint32 traversalStack[MAX_STACK_ENTRIES]{};
+	int stackpointer = 0;
+
+	// Store root node to start travelsal with
+	traversalStack[stackpointer++] = bvh->m_LodStart[bvh->m_RootBVH8Node];
+
+	// Generate ray octant mask
+	uint32 ray_octant = (EVecGetFloatX(deltaVec)<0.f ? 1:0) | (EVecGetFloatY(deltaVec)<0.f ? 2:0) | (EVecGetFloatZ(deltaVec)<0.f ? 4:0);
+
+	hitID = 0xFFFFFFFF; // Miss
+	hitPos = EVecAdd(startPos, deltaVec); // End of ray
+	t = 1.f;
+
+	// Trace until stack underflows
+	while (stackpointer > 0)
+	{
+		// Number of loops through until we find a hit
+		++marchCount;
+
+		--stackpointer;
+		uint32 currentNode = traversalStack[stackpointer];
+
+		if (bvh->m_dataLookup[currentNode].m_ChildCount != 0)
+		{
+			uint32 hitcells[8];
+			uint32 octantallocationmask = GatherChildNodes(bvh, currentNode, startPos, ray_octant, deltaVec, invDeltaVec, hitcells);
+
+			uint32 idx = BitCountLeadingZeroes32(octantallocationmask);
+			while (idx != 32)
+			{
+				// Convert to cell index
+				uint32 cellindex = 31 - idx;
+
+				// Stack overflow
+				if (stackpointer > MAX_STACK_ENTRIES)
+					return -1;
+
+				// Push valid child nodes onto stack
+				traversalStack[stackpointer++] = hitcells[cellindex];
+
+				// Clear this bit for next iteration and get new index
+				octantallocationmask ^= (1 << cellindex);
+				idx = BitCountLeadingZeroes32(octantallocationmask);
+			}
+		}
+		else // Leaf node reached
+		{
+			// Time to invoke a 'hit test' callback and stop if we have an actual hit
+			// It is up to the hit test callback to determine which primitive in this cell is closest etc
+			/*if (leafNodeHitTest(currentNode, m_dataLookup[currentNode].m_DataIndex, this, ray, hit))
+				return;*/
+
+			// Only hit the BVH8 leaf node with no data access
+			/*SVec128 subminbounds = bvh->m_dataLookup[currentNode].m_BoundsMin;
+			SVec128 submaxbounds = bvh->m_dataLookup[currentNode].m_BoundsMax;
+			SVec128 exitpos;
+			t=0.5f;
+			hitID=currentNode;
+			SlabTest(subminbounds, submaxbounds, startPos, deltaVec, invDeltaVec, hitPos, exitpos);*/
+
+			// Default inline hit test returning hit position
+			uint32 modelNode = bvh->m_dataLookup[currentNode].m_DataIndex;
+			float last_t = 1.f;
+			uint32 hitTriangleIndex = 0xFFFFFFFF;
+			for (uint tri=0; tri<bvh->m_data[modelNode].m_numTriangles; ++tri)
+			{
+				uint32 triangleIndex = bvh->m_data[modelNode].m_triangleIndices[tri];
+
+				SVec128 v1 = testtris[triangleIndex].coords[0];
+				SVec128 v2 = testtris[triangleIndex].coords[1];
+				SVec128 v3 = testtris[triangleIndex].coords[2];
+
+				// Hit if closer than before
+				float curr_t = TriHit(startPos, deltaVec, v1, v2, v3, last_t);
+				if (curr_t < last_t)
+				{
+					last_t = curr_t;
+					hitTriangleIndex = triangleIndex;
+				}
+			}
+
+			if (hitTriangleIndex == 0xFFFFFFFF) // Nothing hit
+				continue;
+
+			// TODO: hit position, hit normal etc
+
+			t = last_t;
+			hitID = hitTriangleIndex;
+			hitPos = EVecAdd(startPos, EVecMul(EVecConst(t, t, t, 0.f), deltaVec));
+
+			// Positive hit
+			return 1;
+		}
+	}
+
+	return 0;
 }
 
 void block(int x, int y, uint8_t B, uint8_t G, uint8_t R)
@@ -153,7 +384,6 @@ void block(int x, int y, uint8_t B, uint8_t G, uint8_t R)
 
 int main(int _argc, char** _argv)
 {
-#ifndef USE_SMALL_DATA_SET
 	objl::Loader objloader;
 	if (!objloader.LoadFile("test.obj"))
 	{
@@ -176,7 +406,8 @@ int main(int _argc, char** _argv)
 
 	testtris = new triangle[totaltriangles];
 
-	for (auto &mesh : objloader.LoadedMeshes)
+	//auto &mesh = objloader.LoadedMeshes[1]; // Just the floor plane..
+	for (auto &mesh : objloader.LoadedMeshes) // ..or, the entire scene
 	{
 		int triCount = mesh.Indices.size()/3;
 		for (int i=0;i<triCount;++i)
@@ -197,7 +428,6 @@ int main(int _argc, char** _argv)
 			++t;
 		}
 	}
-#endif
 
 	auto tri_to_box = [](const triangle& s) -> lbvh::aabb<float> {
 		SVec128 fmin = {FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX};
@@ -220,12 +450,13 @@ int main(int _argc, char** _argv)
 		return lbvh::aabb<float> { {minx, miny, minz}, {maxx, maxy, maxz} };
 	};
 
-#ifdef USE_SMALL_DATA_SET
-	int totaltriangles = 3;
-#endif
+	// LBVH
+	lbvh::builder<float> lbvhBuilder;
+	auto bvh = lbvhBuilder(testtris, totaltriangles, tri_to_box);
 
-	lbvh::builder<float> builder;
-	auto bvh = builder(testtris, totaltriangles, tri_to_box);
+	// BVH8
+	testBVH8 = new SBVH8Database<BVH8LeafNode>;
+	bvh8Builder(testtris, totaltriangles, testBVH8);
 
 	// Trace the BVH
 	if(SDL_Init(SDL_INIT_VIDEO) != 0)
@@ -294,24 +525,31 @@ int main(int _argc, char** _argv)
 			SVec128 U = EVecMul(lookMat.r[1], pyVec);
 			for (int x=0; x<width; x+=4)
 			{
+				float t = cameradistance*2.f;
+
 				// Rotating camera
 				float px = (float(x) - float(width)/2.f)/float(width);
 				SVec128 pxVec{px,px,px,0.f};
 				SVec128 L = EVecMul(lookMat.r[0], pxVec);
-				SVec128 traceRay = EVecAdd(EVecAdd(L, U), F);
+				//SVec128 traceRay = EVecAdd(EVecAdd(L, U), F);
+				SVec128 traceRay = EVecMul(EVecAdd(EVecAdd(L, U), F), EVecConst(t,t,t,0.f));
 				SVec128 invRay = EVecRcp(traceRay);
 
 				// Scene
-				float t = cameradistance*2.f;
 				uint32 marchCount = 0;
 				uint32 hitID = 0xFFFFFFFF;
-				traceBVH(bvh, 0, marchCount, t, rayOrigin, hitID, traceRay, invRay);
+				SVec128 hitpos;
+				//traceLBVH(bvh, 0, marchCount, t, rayOrigin, hitID, traceRay, invRay);
+				traceBVH8(testBVH8, marchCount, t, rayOrigin, hitID, traceRay, invRay, hitpos);
+
 				maxTraces = EMaximum(maxTraces, marchCount);
 
-				if (hitID!=0xFFFFFFFF) // HAVE_HIT: Ray hit a primitive in a leaf nodes
+				block(x,y, marchCount, ((hitID>>1)%4)*64, ((hitID>>2)%8)*32);
+
+				/*if (hitID!=0xFFFFFFFF) // HAVE_HIT: Ray hit a primitive in a leaf nodes
 				{
 					// Hit position
-					SVec128 hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t-0.01f,t-0.01f,t-0.01f,1.f)));
+					hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t-0.01f,t-0.01f,t-0.01f,1.f)));
 					// Barycentric coortinates for attribute interpolation
 					SVec128 uvw;
 					Barycentrics(hitpos, testtris[hitID].coords[0], testtris[hitID].coords[1], testtris[hitID].coords[2], uvw);
@@ -320,7 +558,8 @@ int main(int _argc, char** _argv)
 				else
 				{
 					block(x,y, 0,0,0);
-				}
+				}*/
+
 				// X-Ray view
 				//block(x,y, marchCount, marchCount, marchCount);
 
@@ -339,7 +578,7 @@ int main(int _argc, char** _argv)
 					SVec128 invSunRay = EVecRcp(sunRay);
 					float t2 = 64.f;
 					hitID = 0xFFFFFFFF;
-					traceBVH(bvh, 0, marchCount, t2, hitpos, hitID, sunRay, invSunRay);
+					traceLBVH(bvh, 0, marchCount, t2, hitpos, hitID, sunRay, invSunRay);
 					float sunlen = EVecGetFloatX(EVecLen3(sunRay));
 					if (t2<sunlen)
 					{
@@ -369,7 +608,8 @@ int main(int _argc, char** _argv)
 
 	} while (!done);
 
-	//delete [] testtris;
+	delete [] testtris;
+	delete testBVH8;
 
 	// Done
 	SDL_FreeSurface(surface);

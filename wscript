@@ -31,10 +31,11 @@ def build(bld):
         platform_defines = ['_CRT_SECURE_NO_WARNINGS', 'PLATFORM_LINUX', 'LBVH_NO_THREADS']
     includes = ['source', 'includes', '/usr/include/SDL2']
 
-    # RELEASE
     sdk_lib_path = []
     libs = ['SDL2']
-    #compile_flags = ['-O0', '-std=c++17', '-g', '-msse4.1']
+	# DEBUG
+    #compile_flags = ['-O0', '-ffast-math', '-std=c++17', '-g', '-msse4.1']
+    # RELEASE
     compile_flags = ['-Ofast', '-ffast-math', '-std=c++17', '-msse4.1']
     linker_flags = []
 
