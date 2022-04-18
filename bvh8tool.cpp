@@ -11,6 +11,8 @@
 #define MAX_NODE_TRIS 48
 // Depth of traversal stack
 #define MAX_STACK_ENTRIES 16
+// Define this to ignore triangles and work with BVH child nodes only, and see in x-ray vision
+//#define IGNORE_CHILD_DATA
 
 // NOTE: This structure is very expensive for E32E, a data reduction method has to be applied here.
 // One approach could be to only stash connected triangle fans here.
@@ -287,15 +289,18 @@ int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32& marchCount, float& t, SV
 			// Time to invoke a 'hit test' callback and stop if we have an actual hit
 			// It is up to the hit test callback to determine which primitive in this cell is closest etc
 			/*if (leafNodeHitTest(currentNode, m_dataLookup[currentNode].m_DataIndex, this, ray, hit))
-				return;*/
+				return 1;*/
 
 			// Only hit the BVH8 leaf node with no data access
-			/*SVec128 subminbounds = bvh->m_dataLookup[currentNode].m_BoundsMin;
+#ifdef IGNORE_CHILD_DATA
+			SVec128 subminbounds = bvh->m_dataLookup[currentNode].m_BoundsMin;
 			SVec128 submaxbounds = bvh->m_dataLookup[currentNode].m_BoundsMax;
 			SVec128 exitpos;
-			t=0.5f;
 			hitID=currentNode;
-			SlabTest(subminbounds, submaxbounds, startPos, deltaVec, invDeltaVec, hitPos, exitpos);*/
+			SlabTest(subminbounds, submaxbounds, startPos, deltaVec, invDeltaVec, hitPos, exitpos);
+			t = EVecGetFloatX(EVecLen3(EVecSub(hitPos, startPos)));
+			//return 1; // NOTE: no 'hit' returned since we want x-ray vision
+#else
 
 			// Default inline hit test returning hit position
 			uint32 modelNode = bvh->m_dataLookup[currentNode].m_DataIndex;
@@ -326,9 +331,9 @@ int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32& marchCount, float& t, SV
 			t = last_t;
 			hitID = hitTriangleIndex;
 			hitPos = EVecAdd(startPos, EVecMul(EVecConst(t, t, t, 0.f), deltaVec));
-
 			// Positive hit
 			return 1;
+#endif
 		}
 	}
 
@@ -504,6 +509,9 @@ int main(int _argc, char** _argv)
 				//block(x,y, marchCount, marchCount, marchCount);
 
 				// Shadow, only if we hit some geometry
+#ifdef IGNORE_CHILD_DATA
+				block(x,y, marchCount*6, marchCount*6, marchCount*6);
+#else
 				if (hitID != 0xFFFFFFFF)
 				{
 					SVec128 sunPos{20.f,35.f,sinf(rotAng*4.f)*20.f,1.f};
@@ -530,6 +538,7 @@ int main(int _argc, char** _argv)
 				}
 				else
 					block(x,y, 70, 30, 25); // Sky/background hit
+#endif
 			}
 		}
 
