@@ -6,9 +6,9 @@
 #include "SDL2/SDL.h"
 
 // Size of each cell in world units
-#define NODE_DIMENSION 0.8f
+#define NODE_DIMENSION 0.6f
 // NOTE: Once there's a correct cell vs triangle test, this will be reduced
-#define MAX_NODE_TRIS 48
+#define MAX_NODE_TRIS 40
 // Depth of traversal stack
 #define MAX_STACK_ENTRIES 16
 // Define this to ignore triangles and work with BVH child nodes only, and see in x-ray vision
@@ -38,6 +38,48 @@ uint8_t* pixels;
 triangle *testtris;
 
 SBVH8Database<BVH8LeafNode>* testBVH8;
+
+static const uint32 MAX_CLIPPED_VERTICES = 36;
+
+void ClipEdgeToPlaneBegin(SVec128 _planeNormal, SVec128 _planeOrigin, SVec128& _prevPos, SVec128 _pos, float &_prevDist, int& _clipIndex, SVec128 _vClip[MAX_CLIPPED_VERTICES])
+{
+	SVec128 dotCurr = EVecDot3(_planeNormal, EVecSub(_pos, _planeOrigin));
+	float dist = EVecGetFloatX(dotCurr);
+
+	// No previous point, this is the first vertex [A>]------>B
+	if (dist >= 0.f) // vertex is in front of or on the plane
+		_vClip[_clipIndex++] = _pos;
+	// else, vertex is behind the plane, ignore it
+
+	// Remember where we came from
+	_prevPos = _pos;
+	_prevDist = dist;
+}
+
+void ClipEdgeToPlaneNext(SVec128 _planeNormal, SVec128 _planeOrigin, SVec128& _prevPos, SVec128 _pos, float &_prevDist, int& _clipIndex, SVec128 _vClip[MAX_CLIPPED_VERTICES])
+{
+	SVec128 dotCurr = EVecDot3(_planeNormal, EVecSub(_pos, _planeOrigin));
+	float dist = EVecGetFloatX(dotCurr);
+
+	float clipRatio = _prevDist / (_prevDist - dist);
+	SVec128 clipRatioVec = { clipRatio, clipRatio, clipRatio, 1.f };
+
+	uint32 slotSelDist = dist < 0.f ? 1 : 0;
+	uint32 slotSelPrevDist = _prevDist < 0.f ? 1 : 0;
+	uint32 slot1 = (!slotSelDist && slotSelPrevDist) ? _clipIndex + 1 : MAX_CLIPPED_VERTICES - 1;
+
+	SVec128 clippedPos = EVecAdd(_prevPos, EVecMul(EVecSub(_pos, _prevPos), clipRatioVec));
+	_vClip[_clipIndex] = (slotSelDist ^ slotSelPrevDist) ? clippedPos : _pos;
+	_vClip[slot1] = _pos;
+
+	uint32 stepSel = (slotSelDist && slotSelPrevDist) ? 0 : ((!slotSelDist && slotSelPrevDist) ? 2 : 1);
+	_clipIndex += stepSel;
+
+	// Remember where we came from
+	_prevPos = _pos;
+	_prevDist = dist;
+}
+
 
 void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH8LeafNode>* _bvh8)
 {
@@ -77,8 +119,10 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 
 		// World bounds of this cell
 		SVec128 cellMin, cellMax;
-		_bvh8->ToWorldUnits(EVecConvertIntToFloat(EVecConsti(x,y,z,0)), cellMin);
-		_bvh8->ToWorldUnits(EVecConvertIntToFloat(EVecConsti(x+1,y+1,z+1,0)), cellMax);
+		SVec128 cellV000 = EVecConvertIntToFloat(EVecConsti(x,y,z,0));
+		SVec128 cellV111 = EVecConvertIntToFloat(EVecConsti(x+1,y+1,z+1,0));
+		_bvh8->ToWorldUnits(cellV000, cellMin);
+		_bvh8->ToWorldUnits(cellV111, cellMax);
 
 		uint32_t keyIndex;
 		uint32_t dataIndex = _bvh8->FindCell(spatialKey, keyIndex);
@@ -88,42 +132,99 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 			SVec128 triMin{FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX};
 			SVec128 triMax{-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX};
 
-			triMin = EVecMin(triMin, _triangles[i].coords[0]);
-			triMin = EVecMin(triMin, _triangles[i].coords[1]);
-			triMin = EVecMin(triMin, _triangles[i].coords[2]);
+			SVec128 v0 = _triangles[i].coords[0];
+			SVec128 v1 = _triangles[i].coords[1];
+			SVec128 v2 = _triangles[i].coords[2];
 
-			triMax = EVecMax(triMax, _triangles[i].coords[0]);
-			triMax = EVecMax(triMax, _triangles[i].coords[1]);
-			triMax = EVecMax(triMax, _triangles[i].coords[2]);
+			triMin = EVecMin(triMin, v0);
+			triMin = EVecMin(triMin, v1);
+			triMin = EVecMin(triMin, v2);
+
+			triMax = EVecMax(triMax, v0);
+			triMax = EVecMax(triMax, v1);
+			triMax = EVecMax(triMax, v2);
 
 			uint32 elementMin[3], elementMax[3];
 			_bvh8->QuantizePosition(triMin, elementMin);
 			_bvh8->QuantizePosition(triMax, elementMax);
 
-			// TODO: Do a correct triangle vs grid cell intersection test here
-			// This is a placeholder check only
+			// This primitive's aabb is crossed by the cell aabb, it's a good candidate to test
 			if (x>=elementMin[0] && x<=elementMax[0] && y>=elementMin[1] && y<=elementMax[1] && z>=elementMin[2] && z<=elementMax[2])
 			{
-				BVH8LeafNode *leaf;
-				// Add a new data entry if there's nothing here yet
-				if (dataIndex == BVH8IllegalIndex)
-					leaf = _bvh8->Append(spatialKey, dataIndex, keyIndex);
-				else // Otherwise grab the existing data
-					leaf = &_bvh8->m_data[dataIndex];
+				// Do a more precise check by clipping the triangle into the cell bounds
+				// This is used to discard empty cells that don't actually belong to the geometry
+				SVec128 planeOrigin = cellV000;
+				SVec128 nmx = EVecConst(-1.f,0.f,0.f,0.f);
+				SVec128 nx = EVecConst(1.f,0.f,0.f,0.f);
+				SVec128 nmy = EVecConst(0.f,-1.f,0.f,0.f);
+				SVec128 ny = EVecConst(0.f,1.f,0.f,0.f);
+				SVec128 nmz = EVecConst(0.f,0.f,-1.f,0.f);
+				SVec128 nz = EVecConst(0.f,0.f,1.f,0.f);
+				SVec128 planeNormals[6] = { nmx, nx, nmy, ny, nmz, nz };
+				SVec128 planeOrigins[6] = {
+					EVecAdd(planeOrigin,nx), planeOrigin,
+					EVecAdd(planeOrigin,ny), planeOrigin,
+					EVecAdd(planeOrigin,nz), planeOrigin };
 
-				// Append new primitive to the cell only if we're not going overboard
-				if (leaf->m_numTriangles < MAX_NODE_TRIS)
+				int clipSuccess = 0;
+				int inputCount = 4;
+				SVec128 vClip[MAX_CLIPPED_VERTICES], pos[MAX_CLIPPED_VERTICES];
+				SVec128 l0, l1, l2;
+				_bvh8->ToGridUnits(v0, pos[0]);
+				_bvh8->ToGridUnits(v1, pos[1]);
+				_bvh8->ToGridUnits(v2, pos[2]);
+				_bvh8->ToGridUnits(v0, pos[3]);
+				int clipIndex;
+				for (int plane = 0; plane < 6; ++plane)
 				{
-					// Expand current min/max
-					SVec128 exMin = EVecMin(_bvh8->m_dataLookup[keyIndex].m_BoundsMin, triMin);
-					SVec128 exMax = EVecMax(_bvh8->m_dataLookup[keyIndex].m_BoundsMax, triMax);
-					// Clip to maximum cell bounds
-					_bvh8->m_dataLookup[keyIndex].m_BoundsMin = EVecMax(cellMin, exMin);
-					_bvh8->m_dataLookup[keyIndex].m_BoundsMax = EVecMin(cellMax, exMax);
+					clipIndex = 0;
+					SVec128 prevPos = pos[0];
+					float prevDist = 0.f;
+					ClipEdgeToPlaneBegin(planeNormals[plane], planeOrigins[plane], prevPos, pos[0], prevDist, clipIndex, vClip);
+					for (int v = 0; v < inputCount; ++v)
+						ClipEdgeToPlaneNext(planeNormals[plane], planeOrigins[plane], prevPos, pos[v], prevDist, clipIndex, vClip);
 
-					// Append new triangle index
-					leaf->m_triangleIndices[leaf->m_numTriangles] = i;
-					leaf->m_numTriangles++;
+					SVec128i lastFirstSameMask = EVecCmpEQ(vClip[0], vClip[clipIndex-1]);
+					int lastFirstEqual = EVecMoveMask(lastFirstSameMask);
+					if (lastFirstEqual != 0x0000FFFF) // Ended with dissimilar vertex, close the polygon
+						vClip[clipIndex++] = vClip[0];
+
+					if (clipIndex <= 3) // One of the planes fully failed or this is a degenerate
+						break;
+
+					// Copy to input for next phase
+					for (int p = 0; p < clipIndex; ++p)
+						pos[p] = vClip[p];
+					inputCount = clipIndex;
+
+					clipSuccess++;
+				}
+
+				// Add a new data entry if clip test passed
+				if (clipSuccess > 5)
+				{
+					// There's nothing here yet, or we have an existing leaf to work with
+					BVH8LeafNode *leaf;
+					if (dataIndex == BVH8IllegalIndex)
+						leaf = _bvh8->Append(spatialKey, dataIndex, keyIndex);
+					else
+						leaf = &_bvh8->m_data[dataIndex];
+
+					// Append new primitive to the cell only if we're not going overboard
+					if (leaf->m_numTriangles < MAX_NODE_TRIS)
+					{
+						// Expand current min/max
+						SVec128 exMin = EVecMin(_bvh8->m_dataLookup[keyIndex].m_BoundsMin, triMin);
+						SVec128 exMax = EVecMax(_bvh8->m_dataLookup[keyIndex].m_BoundsMax, triMax);
+
+						// Clip to cell bounds
+						_bvh8->m_dataLookup[keyIndex].m_BoundsMin = EVecMax(cellMin, exMin);
+						_bvh8->m_dataLookup[keyIndex].m_BoundsMax = EVecMin(cellMax, exMax);
+
+						// Append new triangle index
+						leaf->m_triangleIndices[leaf->m_numTriangles] = i;
+						leaf->m_numTriangles++;
+					}
 				}
 			}
 		}
@@ -505,39 +606,44 @@ int main(int _argc, char** _argv)
 					block(x,y, 0,0,0);
 				}*/
 
-				// X-Ray view
-				//block(x,y, marchCount, marchCount, marchCount);
-
 				// Shadow, only if we hit some geometry
 #ifdef IGNORE_CHILD_DATA
 				block(x,y, marchCount*6, marchCount*6, marchCount*6);
 #else
+				int color = 0;
 				if (hitID != 0xFFFFFFFF)
 				{
-					SVec128 sunPos{20.f,35.f,sinf(rotAng*4.f)*20.f,1.f};
+					SVec128 sunPos{20.f,35.f,20.f,1.f};
 					SVec128 sunRay = EVecSub(sunPos, hitpos);
 					SVec128 invSunRay = EVecRcp(sunRay);
+
+					SVec128 uvw;
+					Barycentrics(hitpos,
+						testtris[hitID].coords[0],
+						testtris[hitID].coords[1],
+						testtris[hitID].coords[2], uvw);
+					SVec128 uvwx = EVecSplatX(uvw);
+					SVec128 uvwy = EVecSplatY(uvw);
+					SVec128 uvwz = EVecSplatZ(uvw);
+					SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
+					SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
+					SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
+					SVec128 nrm = EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC)); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
+					float L = fabs(EVecGetFloatX(EVecDot3(EVecNorm3(nrm), EVecNorm3(sunRay))));
+
 					float t2 = cameradistance*2.f;
 					hitID = 0xFFFFFFFF;
 					SVec128 shadowHitPos;
 					hitpos = EVecAdd(hitpos, EVecMul(EVecNorm3(traceRay), epsilon));
 					traceBVH8(testBVH8, marchCount, t2, hitpos, hitID, sunRay, invSunRay, shadowHitPos);
 					float sunlen = EVecGetFloatX(EVecLen3(sunRay));
+					float final = L;
 					if (t2<1.f)
-					{
-						float D = 1.f-expf(-t2);
-						int C = int(D*255.f);
-						block(x,y, C, C, C); // Shadow
-					}
-					else
-					{
-						float D = EVecGetFloatX(EVecLen3(hitpos));
-						int C = int(D*16.f);
-						block(x,y, C, C, C);
-					}
+						final *= 0.25f;
+					color = int(final*64.f);
 				}
-				else
-					block(x,y, 70, 30, 25); // Sky/background hit
+
+				block(x,y, color, color, color);
 #endif
 			}
 		}
