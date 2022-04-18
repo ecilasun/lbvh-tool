@@ -573,13 +573,14 @@ int main(int _argc, char** _argv)
 			for (int x=0; x<width; x+=4)
 			{
 				float t = cameradistance*2.f;
+				SVec128 raylenvec{t,t,t,0.f};
 
 				// Rotating camera
 				float px = (float(x) - float(width)/2.f)/float(width);
 				SVec128 pxVec{px,px,px,0.f};
 				SVec128 L = EVecMul(lookMat.r[0], pxVec);
 				//SVec128 traceRay = EVecAdd(EVecAdd(L, U), F);
-				SVec128 traceRay = EVecMul(EVecAdd(EVecAdd(L, U), F), EVecConst(t,t,t,0.f));
+				SVec128 traceRay = EVecMul(EVecAdd(EVecAdd(L, U), F), raylenvec);
 				SVec128 invRay = EVecRcp(traceRay);
 
 				// Scene
@@ -617,29 +618,71 @@ int main(int _argc, char** _argv)
 					SVec128 sunRay = EVecSub(sunPos, hitpos);
 					SVec128 invSunRay = EVecRcp(sunRay);
 
-					SVec128 uvw;
-					Barycentrics(hitpos,
-						testtris[hitID].coords[0],
-						testtris[hitID].coords[1],
-						testtris[hitID].coords[2], uvw);
-					SVec128 uvwx = EVecSplatX(uvw);
-					SVec128 uvwy = EVecSplatY(uvw);
-					SVec128 uvwz = EVecSplatZ(uvw);
-					SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
-					SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
-					SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
-					SVec128 nrm = EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC)); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
-					float L = fabs(EVecGetFloatX(EVecDot3(EVecNorm3(nrm), EVecNorm3(sunRay))));
+					float final = 0.f;
+					SVec128 nrm;
 
+					// Global + NdotL
+					{
+						SVec128 uvw;
+						Barycentrics(hitpos,
+							testtris[hitID].coords[0],
+							testtris[hitID].coords[1],
+							testtris[hitID].coords[2], uvw);
+						SVec128 uvwx = EVecSplatX(uvw);
+						SVec128 uvwy = EVecSplatY(uvw);
+						SVec128 uvwz = EVecSplatZ(uvw);
+						SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
+						SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
+						SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
+						nrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
+						float L = fabs(EVecGetFloatX(EVecDot3(nrm, EVecNorm3(sunRay))));
+						final += L;
+						final += fabs(EVecGetFloatY(nrm)*0.5f+0.5f); // global
+					}
+
+					// Hit position bias/offset
+					SVec128 viewRay = EVecNorm3(traceRay);
+					hitpos = EVecAdd(hitpos, EVecMul(viewRay, epsilon));
+
+					// Reflections
+					float tr = cameradistance*2.f;
+					hitID = 0xFFFFFFFF;
+					SVec128 reflHitPos;
+					//r = viewRay-2*dot(viewRay, n)*n;
+					SVec128 two{2.f,2.f,2.f,0.f};
+					//SVec128 negone{-1.f,-1.f,-1.f,0.f};
+					SVec128 negViewRay = viewRay;//EVecMul(negone, viewRay);
+					SVec128 reflRay = EVecMul(EVecSub(negViewRay, EVecMul(EVecDot3(negViewRay, nrm), EVecMul(two, nrm))), raylenvec);
+					SVec128 invReflRay = EVecRcp(reflRay);
+					traceBVH8(testBVH8, marchCount, tr, hitpos, hitID, reflRay, invReflRay, reflHitPos);
+					if (hitID != 0xFFFFFFFF)
+					{
+						SVec128 uvw;
+						Barycentrics(reflHitPos,
+							testtris[hitID].coords[0],
+							testtris[hitID].coords[1],
+							testtris[hitID].coords[2], uvw);
+						SVec128 uvwx = EVecSplatX(uvw);
+						SVec128 uvwy = EVecSplatY(uvw);
+						SVec128 uvwz = EVecSplatZ(uvw);
+						SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
+						SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
+						SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
+						SVec128 rnrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
+						float rL = fabs(EVecGetFloatX(EVecDot3(rnrm, EVecNorm3(sunRay))));
+						float diminish = fabs(1.f/(64.f*tr+0.01f));
+						diminish = EMinimum(1.f, EMaximum(0.f, diminish));
+						final += rL*diminish;
+					}
+
+					// Shadow
 					float t2 = cameradistance*2.f;
 					hitID = 0xFFFFFFFF;
 					SVec128 shadowHitPos;
-					hitpos = EVecAdd(hitpos, EVecMul(EVecNorm3(traceRay), epsilon));
 					traceBVH8(testBVH8, marchCount, t2, hitpos, hitID, sunRay, invSunRay, shadowHitPos);
-					float sunlen = EVecGetFloatX(EVecLen3(sunRay));
-					float final = L;
 					if (t2<1.f)
-						final *= 0.25f;
+						final *= 0.85f;
+
 					color = int(final*64.f);
 				}
 
