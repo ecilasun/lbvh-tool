@@ -266,8 +266,8 @@ float TriHit(SVec128& origin, SVec128& direction, SVec128& v1, SVec128& v2, SVec
     SVec128 s1 = EVecCross3(direction, e2);
 	SVec128 K = EVecDot3(s1, e1);
 
-	if (EVecGetFloatX(K) >= 0.f)
-		return max_t; // Ignore backfacing (TODO: enable/disable this)
+	/*if (EVecGetFloatX(K) >= 0.f)
+		return max_t; // Ignore backfacing (TODO: enable/disable this)*/
 
     SVec128 invd = EVecRcp(K);
     SVec128 d = EVecSub(origin, v1);
@@ -553,7 +553,7 @@ int SDL_main(int _argc, char** _argv)
     SDL_RenderPresent(renderer);
 
 	bool done = false;
-	const float cameradistance = 20.f;
+	const float cameradistance = 30.f;
 	uint32_t lowTraces = 0xFFFFFFFF;
 	uint32_t highTraces = 0x00000000;
 
@@ -571,7 +571,7 @@ int SDL_main(int _argc, char** _argv)
 		static float rotAng = 0.f;
 		float aspect = float(height) / float(width);
 
-		SVec128 rayOrigin{sinf(rotAng)*cameradistance, cameradistance*0.5f, cosf(rotAng)*cameradistance, 1.f};
+		SVec128 rayOrigin{sinf(rotAng)*cameradistance, (1.f+sinf(rotAng*0.5f))*cameradistance*0.5f, cosf(rotAng)*cameradistance, 1.f};
 		SVec128 lookAt{0.f,0.f,0.f,1.f};
 		SVec128 upVec{0.f,1.f,0.f,0.f};
 		SMatrix4x4 lookMat = EMatLookAtRightHanded(rayOrigin, lookAt, upVec);
@@ -581,7 +581,7 @@ int SDL_main(int _argc, char** _argv)
 		pixels = (uint8_t*)surface->pixels;
 		uint32_t maxTraces = 0;
 		SVec128 nil{0.f, 0.f, 0.f, 0.f};
-		SVec128 epsilon{-0.01f, -0.01f, -0.01f, 0.f};
+		SVec128 epsilon{-0.02f, -0.02f, -0.02f, 0.f};
 		for (int y=0; y<height; y+=4)
 		{
 			float py = aspect * (float(height)/2.f-float(y))/float(height);
@@ -628,15 +628,36 @@ int SDL_main(int _argc, char** _argv)
 #ifdef IGNORE_CHILD_DATA
 				block(x,y, marchCount*6, marchCount*6, marchCount*6);
 #else
+				float final = 0.f;
+				SVec128 nrm;
 				int color = 0;
+
+				// Mesh fog attempt
+				/*if (hitID != 0xFFFFFFFF)
+				{
+					SVec128 forwardepsilon{0.01f, 0.01f, 0.01f, 0.f};
+					// Offset into geometry
+					SVec128 viewRay = EVecNorm3(traceRay);
+					hitpos = EVecAdd(hitpos, EVecMul(viewRay, forwardepsilon));
+
+					// Find ray exit
+					t = cameradistance*2.f;
+					SVec128 exitpos;
+					traceBVH8(testBVH8, marchCount, t, hitpos, hitID, traceRay, invRay, exitpos);
+
+					if (hitID != 0xFFFFFFFF)
+					{
+						float F = EVecGetFloatX(EVecLen3(EVecSub(hitpos, exitpos)));
+						final += 1.f-expf(-F*0.3f);
+					}
+					color = int(final*255.f);
+				}*/
+
 				if (hitID != 0xFFFFFFFF)
 				{
 					SVec128 sunPos{20.f,35.f,20.f,1.f};
 					SVec128 sunRay = EVecSub(sunPos, hitpos);
 					SVec128 invSunRay = EVecRcp(sunRay);
-
-					float final = 0.f;
-					SVec128 nrm;
 
 					// Global + NdotL
 					{
