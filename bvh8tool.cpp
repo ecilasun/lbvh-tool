@@ -1,12 +1,12 @@
 #include <stdio.h>
 #include "math.h"
-#include "lbvh.h"
 #include "bvh8.h"
 #include "objloader.h"
 
 #include "SDL2/SDL.h"
 
-#define MAX_NODE_TRIS 8
+#define NODE_DIMENSION 0.8f
+#define MAX_NODE_TRIS 48
 #define MAX_STACK_ENTRIES 24
 
 // NOTE: This structure is very expensive for E32E, a data reduction method has to be applied here.
@@ -51,9 +51,12 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 		sceneMax = EVecMax(sceneMax, _triangles[i].coords[2]);
 	}
 
+	sceneMin = EVecFloor(sceneMin);
+	sceneMax = EVecCeiling(sceneMax);
+
 	// Set up grid bounds and cell scale
 	_bvh8->m_GridAABBMin = sceneMin;
-	_bvh8->m_GridCellSize = SVec128{1.f,1.f,1.f,0.f};
+	_bvh8->m_GridCellSize = SVec128{NODE_DIMENSION, NODE_DIMENSION, NODE_DIMENSION, 0.f};
 
 	// Get scene span in cell units
 	uint32 gridMin[3], gridMax[3];
@@ -61,9 +64,9 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 	_bvh8->QuantizePosition(sceneMax, gridMax);
 
 	// Scan the grid for intersecting triangles per cell
-	for (int z = gridMin[2]; z < gridMax[2]; ++z)
-	for (int y = gridMin[1]; y < gridMax[1]; ++y)
-	for (int x = gridMin[0]; x < gridMax[0]; ++x)
+	for (int z = gridMin[2]; z <= gridMax[2]; ++z)
+	for (int y = gridMin[1]; y <= gridMax[1]; ++y)
+	for (int x = gridMin[0]; x <= gridMax[0]; ++x)
 	{
 		uint32_t spatialKey = _bvh8->EncodeKey(x, y, z);
 
@@ -92,6 +95,8 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 			_bvh8->QuantizePosition(triMin, elementMin);
 			_bvh8->QuantizePosition(triMax, elementMax);
 
+			// TODO: Do a correct triangle vs grid cell intersection test here
+			// This is a placeholder check only
 			if (x>=elementMin[0] && x<=elementMax[0] && y>=elementMin[1] && y<=elementMax[1] && z>=elementMin[2] && z<=elementMax[2])
 			{
 				BVH8LeafNode *leaf;
@@ -149,8 +154,8 @@ float TriHit(SVec128& origin, SVec128& direction, SVec128& v1, SVec128& v2, SVec
     SVec128 s1 = EVecCross3(direction, e2);
 	SVec128 K = EVecDot3(s1, e1);
 
-	/*if (EVecGetFloatX(K) >= 0.f)
-		return max_t; // Ignore backfacing (TODO: enable/disable this)*/
+	if (EVecGetFloatX(K) >= 0.f)
+		return max_t; // Ignore backfacing (TODO: enable/disable this)
 
     SVec128 invd = EVecRcp(K);
     SVec128 d = EVecSub(origin, v1);
@@ -193,50 +198,6 @@ bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVe
 	isect = EVecAdd(rayOrigin, EVecMul(EVecConst(enter,enter,enter,0.f), rayDir));
 	exitpos = EVecAdd(rayOrigin, EVecMul(EVecConst(exit,exit,exit,0.f), rayDir));
 	return enter <= exit;
-}
-
-void traceLBVH(lbvh::bvh<float> &bvh, uint32 rootnode, uint32& marchCount, float& t, SVec128& rayOrigin, uint32& hitID, SVec128& rayDir, SVec128& invRayDir)
-{
-	marchCount++;
-	uint nodeid = rootnode&0x7FFFFFFF;
-
-	if (rootnode&0x80000000) // This is a leaf node, do a triangle test
-	{
-		float hitT = TriHit(rayOrigin, rayDir, testtris[nodeid].coords[0], testtris[nodeid].coords[1], testtris[nodeid].coords[2], t+1.f);
-
-		// Closer than closest hit and not missed
-		if (hitT < t)
-		{
-			t = hitT;
-			hitID = nodeid;
-		}
-	}
-	else
-	{
-		/*if (hitID!=0xFFFFFFFF) // ANY_HIT: return as soon as we have a triangle
-			return;*/
-
-		SVec128 p0{bvh[nodeid].box.min.x, bvh[nodeid].box.min.y, bvh[nodeid].box.min.z, 0.f};
-		SVec128 p1{bvh[nodeid].box.max.x, bvh[nodeid].box.max.y, bvh[nodeid].box.max.z, 0.f};
-
-		SVec128 isect, exitpos;
-		bool hit = SlabTest(p0, p1, rayOrigin, rayDir, invRayDir, isect, exitpos);
-		if (hit) // We hit the bounds
-		{
-			// NOTE: This is easily solvable for BVH8 with a ray octant mask
-			// In this case we'll need to check for the 'nearest' hit somehow
-			// or know which node is the best hit candidate ahead of time
-			SVec128 delta = EVecSub(isect, rayOrigin);
-			float vlen = EVecGetFloatX(EVecLen3(delta));
-
-			// Current ray is further than this cell, take the branch
-			if(t > vlen) // CLOSEST_HIT: find the hit position closest to the ray origin (i.e. minimum t)
-			{
-				traceLBVH(bvh, bvh[nodeid].left, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
-				traceLBVH(bvh, bvh[nodeid].right, marchCount, t, rayOrigin, hitID, rayDir, invRayDir);
-			}
-		}
-	}
 }
 
 uint32 GatherChildNodes(SBVH8Database<BVH8LeafNode>* bvh, uint32 rootNode, SVec128 startPos, uint32 rayOctantMask, SVec128 deltaVec, SVec128 invDeltaVec, uint32* hitcells)
@@ -430,31 +391,6 @@ int main(int _argc, char** _argv)
 		}
 	}
 
-	auto tri_to_box = [](const triangle& s) -> lbvh::aabb<float> {
-		SVec128 fmin = {FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX};
-		SVec128 fmax = {-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX};
-
-		fmin = EVecMin(fmin, s.coords[0]);
-		fmin = EVecMin(fmin, s.coords[1]);
-		fmin = EVecMin(fmin, s.coords[2]);
-		fmax = EVecMax(fmax, s.coords[0]);
-		fmax = EVecMax(fmax, s.coords[1]);
-		fmax = EVecMax(fmax, s.coords[2]);
-
-		float minx = EVecGetFloatX(fmin);
-		float miny = EVecGetFloatY(fmin);
-		float minz = EVecGetFloatZ(fmin);
-		float maxx = EVecGetFloatX(fmax);
-		float maxy = EVecGetFloatY(fmax);
-		float maxz = EVecGetFloatZ(fmax);
-
-		return lbvh::aabb<float> { {minx, miny, minz}, {maxx, maxy, maxz} };
-	};
-
-	// LBVH
-	lbvh::builder<float> lbvhBuilder;
-	auto bvh = lbvhBuilder(testtris, totaltriangles, tri_to_box);
-
 	// BVH8
 	testBVH8 = new SBVH8Database<BVH8LeafNode>;
 	bvh8Builder(testtris, totaltriangles, testBVH8);
@@ -518,7 +454,8 @@ int main(int _argc, char** _argv)
 
 		pixels = (uint8_t*)surface->pixels;
 		uint32 maxTraces = 0;
-		SVec128 nil{0.f,0.f,0.f,0.f};
+		SVec128 nil{0.f, 0.f, 0.f, 0.f};
+		SVec128 epsilon{-0.01f, -0.01f, -0.01f, 0.f};
 		for (int y=0; y<height; y+=4)
 		{
 			float py = aspect * (float(height)/2.f-float(y))/float(height);
@@ -540,21 +477,20 @@ int main(int _argc, char** _argv)
 				uint32 marchCount = 0;
 				uint32 hitID = 0xFFFFFFFF;
 				SVec128 hitpos;
-				//traceLBVH(bvh, 0, marchCount, t, rayOrigin, hitID, traceRay, invRay);
 				traceBVH8(testBVH8, marchCount, t, rayOrigin, hitID, traceRay, invRay, hitpos);
-
 				maxTraces = EMaximum(maxTraces, marchCount);
-
-				block(x,y, marchCount, ((hitID>>1)%4)*64, ((hitID>>2)%8)*32);
 
 				/*if (hitID!=0xFFFFFFFF) // HAVE_HIT: Ray hit a primitive in a leaf nodes
 				{
 					// Hit position
-					hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t-0.01f,t-0.01f,t-0.01f,1.f)));
+					//hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t-0.01f,t-0.01f,t-0.01f,1.f)));
 					// Barycentric coortinates for attribute interpolation
-					SVec128 uvw;
-					Barycentrics(hitpos, testtris[hitID].coords[0], testtris[hitID].coords[1], testtris[hitID].coords[2], uvw);
-					block(x,y, ((hitID>>1)%2)*128, ((hitID>>1)%4)*64, ((hitID>>2)%8)*32);
+					//SVec128 uvw;
+					//Barycentrics(hitpos, testtris[hitID].coords[0], testtris[hitID].coords[1], testtris[hitID].coords[2], uvw);
+					//block(x,y, ((hitID>>1)%2)*128, ((hitID>>1)%4)*64, ((hitID>>2)%8)*32);
+					float D = EVecGetFloatX(EVecLen3(hitpos));
+					int C = int(D*16.f);
+					block(x,y, C, C, C);
 				}
 				else
 				{
@@ -564,36 +500,29 @@ int main(int _argc, char** _argv)
 				// X-Ray view
 				//block(x,y, marchCount, marchCount, marchCount);
 
-				// Shadow
-				/*if (hitID!=0xFFFFFFFF)
+				// Shadow, only if we hit some geometry
+				if (hitID != 0xFFFFFFFF)
 				{
-					float D = (t<128.f?t:0.f)/16.f;
-					int C = int(D*255.f);*/
-					//int hX = int(EVecGetFloatX(hitpos)*100.f);
-					//int hY = int(EVecGetFloatY(hitpos)*100.f);
-					//int hZ = int(EVecGetFloatZ(hitpos)*100.f);
-					//block(x,y, C, C, C);
-
-					/*SVec128 sunPos{20.f,35.f,sinf(rotAng*4.f)*20.f,1.f};
+					SVec128 sunPos{20.f,35.f,sinf(rotAng*4.f)*20.f,1.f};
 					SVec128 sunRay = EVecSub(sunPos, hitpos);
 					SVec128 invSunRay = EVecRcp(sunRay);
-					float t2 = 64.f;
+					float t2 = cameradistance*2.f;
 					hitID = 0xFFFFFFFF;
-					traceLBVH(bvh, 0, marchCount, t2, hitpos, hitID, sunRay, invSunRay);
+					SVec128 shadowHitPos;
+					hitpos = EVecAdd(hitpos, EVecMul(EVecNorm3(traceRay), epsilon));
+					traceBVH8(testBVH8, marchCount, t2, hitpos, hitID, sunRay, invSunRay, shadowHitPos);
 					float sunlen = EVecGetFloatX(EVecLen3(sunRay));
-					if (t2<sunlen)
-					{
-						float D = fabs(t2-sunlen);
-						int C = int(D);
-						block(x,y, C, C, C);
-					}
+					if (t2<1.f)
+						block(x,y, 0, 0, 0); // Shadow
 					else
 					{
 						float D = EVecGetFloatX(EVecLen3(hitpos));
 						int C = int(D*16.f);
 						block(x,y, C, C, C);
 					}
-				}*/
+				}
+				else
+					block(x,y, 70, 30, 25); // Sky/background hit
 			}
 		}
 
