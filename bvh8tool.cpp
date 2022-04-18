@@ -11,6 +11,9 @@
 #include "bvh8.h"
 #include "objloader.h"
 
+// Fog prototype
+//#define FOG_WORK
+
 // Size of each cell in world units
 #define NODE_DIMENSION 0.6f
 // NOTE: Once there's a correct cell vs triangle test, this will be reduced
@@ -266,8 +269,12 @@ float TriHit(SVec128& origin, SVec128& direction, SVec128& v1, SVec128& v2, SVec
     SVec128 s1 = EVecCross3(direction, e2);
 	SVec128 K = EVecDot3(s1, e1);
 
-	/*if (EVecGetFloatX(K) >= 0.f)
-		return max_t; // Ignore backfacing (TODO: enable/disable this)*/
+#ifdef FOG_WORK
+	// Fog requires double-sided hits
+#else
+	if (EVecGetFloatX(K) >= 0.f)
+		return max_t; // Ignore backfacing (TODO: enable/disable this)
+#endif
 
     SVec128 invd = EVecRcp(K);
     SVec128 d = EVecSub(origin, v1);
@@ -632,27 +639,41 @@ int SDL_main(int _argc, char** _argv)
 				SVec128 nrm;
 				int color = 0;
 
+#ifdef FOG_WORK
 				// Mesh fog attempt
-				/*if (hitID != 0xFFFFFFFF)
+				int entrycount = 0;
+				if (hitID != 0xFFFFFFFF)
 				{
-					SVec128 forwardepsilon{0.01f, 0.01f, 0.01f, 0.f};
-					// Offset into geometry
+					SVec128 forwardepsilon{0.02f, 0.02f, 0.02f, 0.f};
 					SVec128 viewRay = EVecNorm3(traceRay);
-					hitpos = EVecAdd(hitpos, EVecMul(viewRay, forwardepsilon));
-
-					// Find ray exit
-					t = cameradistance*2.f;
-					SVec128 exitpos;
-					traceBVH8(testBVH8, marchCount, t, hitpos, hitID, traceRay, invRay, exitpos);
-
-					if (hitID != 0xFFFFFFFF)
+					float F = 0.f;
+					for (int i=0; i<12; ++i)
 					{
-						float F = EVecGetFloatX(EVecLen3(EVecSub(hitpos, exitpos)));
-						final += 1.f-expf(-F*0.3f);
-					}
-					color = int(final*255.f);
-				}*/
+						// Offset forward
+						hitpos = EVecAdd(hitpos, EVecMul(viewRay, forwardepsilon));
 
+						// Find ray exit
+						t = 64.f;
+						SVec128 exitpos;
+						traceBVH8(testBVH8, marchCount, t, hitpos, hitID, traceRay, invRay, exitpos);
+
+						if (hitID != 0xFFFFFFFF)
+						{
+							if (entrycount%2==0)
+							{
+								F += 3.f*expf(-EVecGetFloatX(EVecLen3(EVecSub(hitpos, exitpos))));
+								hitpos = exitpos;
+							}
+						}
+						else
+							break;
+						++entrycount;
+					}
+					F = F/float(entrycount);
+					final += expf(-F*F*3.f);
+					color = int(final*255.f);
+				}
+#else
 				if (hitID != 0xFFFFFFFF)
 				{
 					SVec128 sunPos{20.f,35.f,20.f,1.f};
@@ -723,7 +744,7 @@ int SDL_main(int _argc, char** _argv)
 
 					color = int(final*64.f);
 				}
-
+#endif // FOG_WORK
 				block(x,y, color, color, color);
 #endif
 			}
