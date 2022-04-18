@@ -1,9 +1,15 @@
+#if defined(PLATFORM_LINUX)
+#include "platformlinux.h"
+#include "SDL2/SDL.h"
+#else // PLATFORM_WINDOWS
+#include "platformwin.h"
+#include "SDL.h"
+#endif
+
 #include <stdio.h>
 #include "math.h"
 #include "bvh8.h"
 #include "objloader.h"
-
-#include "SDL2/SDL.h"
 
 // Size of each cell in world units
 #define NODE_DIMENSION 0.6f
@@ -18,8 +24,8 @@
 // One approach could be to only stash connected triangle fans here.
 struct BVH8LeafNode
 {
-	uint32 m_numTriangles{0};
-	uint32 m_triangleIndices[MAX_NODE_TRIS]{};
+	uint32_t m_numTriangles{0};
+	uint32_t m_triangleIndices[MAX_NODE_TRIS]{};
 };
 
 struct triangle final {
@@ -31,15 +37,15 @@ struct hitinfo final {
 	float hitT;
 };
 
-uint32 width = 1280;
-uint32 height = 960;
+uint32_t width = 1280;
+uint32_t height = 960;
 
 uint8_t* pixels;
 triangle *testtris;
 
 SBVH8Database<BVH8LeafNode>* testBVH8;
 
-static const uint32 MAX_CLIPPED_VERTICES = 36;
+static const uint32_t MAX_CLIPPED_VERTICES = 36;
 
 void ClipEdgeToPlaneBegin(SVec128 _planeNormal, SVec128 _planeOrigin, SVec128& _prevPos, SVec128 _pos, float &_prevDist, int& _clipIndex, SVec128 _vClip[MAX_CLIPPED_VERTICES])
 {
@@ -64,15 +70,15 @@ void ClipEdgeToPlaneNext(SVec128 _planeNormal, SVec128 _planeOrigin, SVec128& _p
 	float clipRatio = _prevDist / (_prevDist - dist);
 	SVec128 clipRatioVec = { clipRatio, clipRatio, clipRatio, 1.f };
 
-	uint32 slotSelDist = dist < 0.f ? 1 : 0;
-	uint32 slotSelPrevDist = _prevDist < 0.f ? 1 : 0;
-	uint32 slot1 = (!slotSelDist && slotSelPrevDist) ? _clipIndex + 1 : MAX_CLIPPED_VERTICES - 1;
+	uint32_t slotSelDist = dist < 0.f ? 1 : 0;
+	uint32_t slotSelPrevDist = _prevDist < 0.f ? 1 : 0;
+	uint32_t slot1 = (!slotSelDist && slotSelPrevDist) ? _clipIndex + 1 : MAX_CLIPPED_VERTICES - 1;
 
 	SVec128 clippedPos = EVecAdd(_prevPos, EVecMul(EVecSub(_pos, _prevPos), clipRatioVec));
 	_vClip[_clipIndex] = (slotSelDist ^ slotSelPrevDist) ? clippedPos : _pos;
 	_vClip[slot1] = _pos;
 
-	uint32 stepSel = (slotSelDist && slotSelPrevDist) ? 0 : ((!slotSelDist && slotSelPrevDist) ? 2 : 1);
+	uint32_t stepSel = (slotSelDist && slotSelPrevDist) ? 0 : ((!slotSelDist && slotSelPrevDist) ? 2 : 1);
 	_clipIndex += stepSel;
 
 	// Remember where we came from
@@ -106,7 +112,7 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 	_bvh8->m_GridCellSize = SVec128{NODE_DIMENSION, NODE_DIMENSION, NODE_DIMENSION, 0.f};
 
 	// Get scene span in cell units
-	uint32 gridMin[3], gridMax[3];
+	uint32_t gridMin[3], gridMax[3];
 	_bvh8->QuantizePosition(sceneMin, gridMin);
 	_bvh8->QuantizePosition(sceneMax, gridMax);
 
@@ -144,7 +150,7 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 			triMax = EVecMax(triMax, v1);
 			triMax = EVecMax(triMax, v2);
 
-			uint32 elementMin[3], elementMax[3];
+			uint32_t elementMin[3], elementMax[3];
 			_bvh8->QuantizePosition(triMin, elementMin);
 			_bvh8->QuantizePosition(triMax, elementMax);
 
@@ -306,21 +312,21 @@ bool SlabTest(SVec128& p0, SVec128& p1, SVec128& rayOrigin, SVec128& rayDir, SVe
 	return enter <= exit;
 }
 
-uint32 GatherChildNodes(SBVH8Database<BVH8LeafNode>* bvh, uint32 rootNode, SVec128 startPos, uint32 rayOctantMask, SVec128 deltaVec, SVec128 invDeltaVec, uint32* hitcells)
+uint32_t GatherChildNodes(SBVH8Database<BVH8LeafNode>* bvh, uint32_t rootNode, SVec128 startPos, uint32_t rayOctantMask, SVec128 deltaVec, SVec128 invDeltaVec, uint32_t* hitcells)
 {
-	uint32 octantallocationmask = 0;
+	uint32_t octantallocationmask = 0;
 
 	// Generate octant allocation mask and store items in hit order (search on caller side will be in reverse bit scan order, i.e. from MSB to LSB)
-	uint32 childcount = bvh->m_dataLookup[rootNode].m_ChildCount;
-	uint32 firstChildNode = bvh->m_dataLookup[rootNode].m_DataIndex;
-	for (uint32 i = 0; i < childcount; ++i)
+	uint32_t childcount = bvh->m_dataLookup[rootNode].m_ChildCount;
+	uint32_t firstChildNode = bvh->m_dataLookup[rootNode].m_DataIndex;
+	for (uint32_t i = 0; i < childcount; ++i)
 	{
-		uint32 idx = firstChildNode + i;
+		uint32_t idx = firstChildNode + i;
 		SVec128 subminbounds = bvh->m_dataLookup[idx].m_BoundsMin;
 		SVec128 submaxbounds = bvh->m_dataLookup[idx].m_BoundsMax;
 		if (SlabTestFast(subminbounds, submaxbounds, startPos, deltaVec, invDeltaVec))
 		{
-			uint32 byoctant = (bvh->m_dataLookup[idx].m_SpatialKey & 0x00000007) ^ rayOctantMask;
+			uint32_t byoctant = (bvh->m_dataLookup[idx].m_SpatialKey & 0x00000007) ^ rayOctantMask;
 			hitcells[byoctant] = idx;
 			octantallocationmask |= (1 << byoctant);
 		}
@@ -329,7 +335,7 @@ uint32 GatherChildNodes(SBVH8Database<BVH8LeafNode>* bvh, uint32 rootNode, SVec1
 	return octantallocationmask;
 }
 
-EInline int32 BitCountLeadingZeroes32(uint32 x)
+EInline int32_t BitCountLeadingZeroes32(uint32_t x)
 {
 	#if defined(PLATFORM_WINDOWS)
 		return __lzcnt(x);
@@ -338,16 +344,16 @@ EInline int32 BitCountLeadingZeroes32(uint32 x)
 	#endif
 }
 
-int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32& marchCount, float& t, SVec128& startPos, uint32& hitID, SVec128& deltaVec, SVec128& invDeltaVec, SVec128& hitPos)
+int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32_t& marchCount, float& t, SVec128& startPos, uint32_t& hitID, SVec128& deltaVec, SVec128& invDeltaVec, SVec128& hitPos)
 {
-	uint32 traversalStack[MAX_STACK_ENTRIES]{};
+	uint32_t traversalStack[MAX_STACK_ENTRIES]{};
 	int stackpointer = 0;
 
 	// Store root node to start travelsal with
 	traversalStack[stackpointer++] = bvh->m_LodStart[bvh->m_RootBVH8Node];
 
 	// Generate ray octant mask
-	uint32 ray_octant = (EVecGetFloatX(deltaVec)<0.f ? 1:0) | (EVecGetFloatY(deltaVec)<0.f ? 2:0) | (EVecGetFloatZ(deltaVec)<0.f ? 4:0);
+	uint32_t ray_octant = (EVecGetFloatX(deltaVec)<0.f ? 1:0) | (EVecGetFloatY(deltaVec)<0.f ? 2:0) | (EVecGetFloatZ(deltaVec)<0.f ? 4:0);
 
 	hitID = 0xFFFFFFFF; // Miss
 	hitPos = EVecAdd(startPos, deltaVec); // End of ray
@@ -360,18 +366,18 @@ int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32& marchCount, float& t, SV
 		++marchCount;
 
 		--stackpointer;
-		uint32 currentNode = traversalStack[stackpointer];
+		uint32_t currentNode = traversalStack[stackpointer];
 
 		if (bvh->m_dataLookup[currentNode].m_ChildCount != 0)
 		{
-			uint32 hitcells[8];
-			uint32 octantallocationmask = GatherChildNodes(bvh, currentNode, startPos, ray_octant, deltaVec, invDeltaVec, hitcells);
+			uint32_t hitcells[8];
+			uint32_t octantallocationmask = GatherChildNodes(bvh, currentNode, startPos, ray_octant, deltaVec, invDeltaVec, hitcells);
 
-			uint32 idx = BitCountLeadingZeroes32(octantallocationmask);
+			uint32_t idx = BitCountLeadingZeroes32(octantallocationmask);
 			while (idx != 32)
 			{
 				// Convert to cell index
-				uint32 cellindex = 31 - idx;
+				uint32_t cellindex = 31 - idx;
 
 				// Stack overflow
 				if (stackpointer > MAX_STACK_ENTRIES)
@@ -404,12 +410,12 @@ int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32& marchCount, float& t, SV
 #else
 
 			// Default inline hit test returning hit position
-			uint32 modelNode = bvh->m_dataLookup[currentNode].m_DataIndex;
+			uint32_t modelNode = bvh->m_dataLookup[currentNode].m_DataIndex;
 			float last_t = 1.f;
-			uint32 hitTriangleIndex = 0xFFFFFFFF;
-			for (uint tri=0; tri<bvh->m_data[modelNode].m_numTriangles; ++tri)
+			uint32_t hitTriangleIndex = 0xFFFFFFFF;
+			for (uint32_t tri=0; tri<bvh->m_data[modelNode].m_numTriangles; ++tri)
 			{
-				uint32 triangleIndex = bvh->m_data[modelNode].m_triangleIndices[tri];
+				uint32_t triangleIndex = bvh->m_data[modelNode].m_triangleIndices[tri];
 
 				SVec128 v1 = testtris[triangleIndex].coords[0];
 				SVec128 v2 = testtris[triangleIndex].coords[1];
@@ -453,8 +459,19 @@ void block(int x, int y, uint8_t B, uint8_t G, uint8_t R)
 	}
 }
 
+#if defined(PLATFORM_LINUX)
 int main(int _argc, char** _argv)
+#else
+int SDL_main(int _argc, char** _argv)
+#endif
 {
+#if defined(PLATFORM_LINUX)
+	// Console always there for Linux
+#else
+	HWND hWnd = GetConsoleWindow();
+	ShowWindow( hWnd, SW_HIDE );
+#endif
+
 	objl::Loader objloader;
 	if (!objloader.LoadFile("test.obj"))
 	{
@@ -537,8 +554,8 @@ int main(int _argc, char** _argv)
 
 	bool done = false;
 	const float cameradistance = 20.f;
-	uint32 lowTraces = 0xFFFFFFFF;
-	uint32 highTraces = 0x00000000;
+	uint32_t lowTraces = 0xFFFFFFFF;
+	uint32_t highTraces = 0x00000000;
 
 	do{
 		SDL_Event event;
@@ -562,7 +579,7 @@ int main(int _argc, char** _argv)
 		SVec128 F = EVecMul(lookMat.r[2], pzVec);
 
 		pixels = (uint8_t*)surface->pixels;
-		uint32 maxTraces = 0;
+		uint32_t maxTraces = 0;
 		SVec128 nil{0.f, 0.f, 0.f, 0.f};
 		SVec128 epsilon{-0.01f, -0.01f, -0.01f, 0.f};
 		for (int y=0; y<height; y+=4)
@@ -584,8 +601,8 @@ int main(int _argc, char** _argv)
 				SVec128 invRay = EVecRcp(traceRay);
 
 				// Scene
-				uint32 marchCount = 0;
-				uint32 hitID = 0xFFFFFFFF;
+				uint32_t marchCount = 0;
+				uint32_t hitID = 0xFFFFFFFF;
 				SVec128 hitpos;
 				traceBVH8(testBVH8, marchCount, t, rayOrigin, hitID, traceRay, invRay, hitpos);
 				maxTraces = EMaximum(maxTraces, marchCount);

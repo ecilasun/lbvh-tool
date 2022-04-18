@@ -12,32 +12,45 @@ top = '.'
 
 
 def options(opt):
-    if ('COMSPEC' in os.environ):
-        opt.load('msvc')
-    else:
-        opt.load('clang++')
+    pass
 
 def configure(conf):
     if ('COMSPEC' in os.environ):
+        conf.env.MSVC_TARGETS = ['x64']
         conf.load('msvc')
+        conf.env.PLATFORM = ['windows']
     else:
         conf.load('clang++')
 
 def build(bld):
 
-    if ('COMSPEC' in os.environ):
-        platform_defines = ['_CRT_SECURE_NO_WARNINGS', 'PLATFORM_WINDOWS', 'LBVH_NO_THREADS']
-    else:
-        platform_defines = ['_CRT_SECURE_NO_WARNINGS', 'PLATFORM_LINUX', 'LBVH_NO_THREADS']
-    includes = ['source', 'includes', '/usr/include/SDL2']
+    bld.post_mode = Build.POST_LAZY
 
-    sdk_lib_path = []
-    libs = ['SDL2']
-	# DEBUG
-    #compile_flags = ['-O0', '-ffast-math', '-std=c++17', '-g', '-msse4.1'] # -ggdb
-    # RELEASE
-    compile_flags = ['-Ofast', '-ffast-math', '-std=c++17', '-msse4.1']
-    linker_flags = []
+    if ('COMSPEC' in os.environ):
+        winlibroot = '%ProgramFiles%Windows Kits/10/Lib//10.0.19041.0/'
+        winincroot = '%ProgramFiles%Windows Kits/10/Include/10.0.19041.0/'
+        win_sdk_lib_path = os.path.expandvars(winlibroot+'um/x64/')
+        win_sdk_include_path = os.path.expandvars(winincroot+'um/x64/')
+        win_sdk_include_path_shared = os.path.expandvars(winincroot+'shared')
+
+        platform_defines = ['PLATFORM_WINDOWS', '_CRT_SECURE_NO_WARNINGS']
+        includes = ['source', 'includes', 'SDL2/include', win_sdk_include_path, win_sdk_include_path_shared]
+        sdk_lib_path = [win_sdk_lib_path, os.path.abspath('SDL2\\lib\\x64')]
+        #RELEASE
+        compile_flags = ['/permissive-', '/arch:AVX', '/GL', '/WX', '/Ox', '/Ot', '/Oy', '/fp:fast', '/Qfast_transcendentals', '/Zi', '/EHsc', '/FS', '/D_SECURE_SCL 0', '/Fdbvh8tool']
+        linker_flags = ['/SUBSYSTEM:CONSOLE', '/LTCG', '/RELEASE']
+        #DEBUG
+        #compile_flags = ['/permissive-', '/arch:AVX', '/WX', '/Od', '/DDEBUG', '/Qfast_transcendentals', '/Zi', '/GS', '/EHsc', '/FS']
+        #linker_flags = ['/SUBSYSTEM:CONSOLE', '/LTCG', '/DEBUG']
+        libs = ['ws2_32', 'shell32', 'user32', 'Comdlg32', 'gdi32', 'ole32', 'kernel32', 'winmm', 'SDL2main', 'SDL2']
+    else:
+        platform_defines = ['PLATFORM_LINUX', '_CRT_SECURE_NO_WARNINGS']
+        includes = ['source', 'includes', '/usr/include/SDL2']
+        sdk_lib_path = []
+        compile_flags = ['-Ofast', '-ffast-math', '-std=c++17', '-msse4.1']
+        #compile_flags = ['-O0', '-ffast-math', '-std=c++17', '-g', '-msse4.1'] # -ggdb
+        linker_flags = []
+        libs = ['SDL2']
 
     # Build risctool
     bld.program(
@@ -48,4 +61,4 @@ def build(bld):
         defines=platform_defines,
         includes=includes,
         libpath=sdk_lib_path,
-        lib=libs)
+        lib=libs )

@@ -1,6 +1,10 @@
 #pragma once
 
-#include "platform.h"
+#if defined(PLATFORM_LINUX)
+#include "platformlinux.h"
+#else
+#include "platformwin.h"
+#endif
 
 // --------------------------------------------------------------------------------
 // Common defines
@@ -121,7 +125,7 @@ struct EAlign(16) SBoundingBox
 // Bit count
 // --------------------------------------------------------------------------------
 
-/*EInline int ECountTrailingZeros(const uint32 value)
+/*EInline int ECountTrailingZeros(const uint32_t value)
 {
 	DWORD out_bit = 0;
 	if (_BitScanForward(&out_bit, value))
@@ -130,7 +134,7 @@ struct EAlign(16) SBoundingBox
 		return 32;
 }
 
-EInline int ECountLeadingZeros(const uint32 value)
+EInline int ECountLeadingZeros(const uint32_t value)
 {
 	DWORD out_bit = 0;
 	if (_BitScanReverse(&out_bit, value))
@@ -158,12 +162,12 @@ EInline SVec128 EVecConst(const float _xyzw)
 	return _mm_set_ps1(_xyzw);
 }
 
-EInline SVec128i EVecConsti(const uint32 _x, const uint32 _y, const uint32 _z, const uint32 _w)
+EInline SVec128i EVecConsti(const uint32_t _x, const uint32_t _y, const uint32_t _z, const uint32_t _w)
 {
 	return _mm_set_epi32(_w, _z, _y, _x);
 }
 
-EInline SVec128i EVecConsti(const uint32 _xyzw)
+EInline SVec128i EVecConsti(const uint32_t _xyzw)
 {
 	return _mm_set1_epi32(_xyzw);
 }
