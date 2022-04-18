@@ -34,7 +34,7 @@ def build(bld):
     sdk_lib_path = []
     libs = ['SDL2']
 	# DEBUG
-    #compile_flags = ['-O0', '-ffast-math', '-std=c++17', '-g', '-msse4.1']
+    #compile_flags = ['-O0', '-ffast-math', '-std=c++17', '-g', '-msse4.1'] # -ggdb
     # RELEASE
     compile_flags = ['-Ofast', '-ffast-math', '-std=c++17', '-msse4.1']
     linker_flags = []
