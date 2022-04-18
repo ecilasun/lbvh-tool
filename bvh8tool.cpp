@@ -5,9 +5,12 @@
 
 #include "SDL2/SDL.h"
 
+// Size of each cell in world units
 #define NODE_DIMENSION 0.8f
+// NOTE: Once there's a correct cell vs triangle test, this will be reduced
 #define MAX_NODE_TRIS 48
-#define MAX_STACK_ENTRIES 24
+// Depth of traversal stack
+#define MAX_STACK_ENTRIES 16
 
 // NOTE: This structure is very expensive for E32E, a data reduction method has to be applied here.
 // One approach could be to only stash connected triangle fans here.
@@ -513,7 +516,11 @@ int main(int _argc, char** _argv)
 					traceBVH8(testBVH8, marchCount, t2, hitpos, hitID, sunRay, invSunRay, shadowHitPos);
 					float sunlen = EVecGetFloatX(EVecLen3(sunRay));
 					if (t2<1.f)
-						block(x,y, 0, 0, 0); // Shadow
+					{
+						float D = 1.f-expf(-t2);
+						int C = int(D*255.f);
+						block(x,y, C, C, C); // Shadow
+					}
 					else
 					{
 						float D = EVecGetFloatX(EVecLen3(hitpos));
