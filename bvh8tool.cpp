@@ -68,8 +68,9 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 		uint32_t spatialKey = _bvh8->EncodeKey(x, y, z);
 
 		// World bounds of this cell
-		SVec128 cellMin = EVecConvertIntToFloat(EVecConsti(x,y,z,0));
-		SVec128 cellMax = EVecConvertIntToFloat(EVecConsti(x+1,y+1,z+1,0));
+		SVec128 cellMin, cellMax;
+		_bvh8->ToWorldUnits(EVecConvertIntToFloat(EVecConsti(x,y,z,0)), cellMin);
+		_bvh8->ToWorldUnits(EVecConvertIntToFloat(EVecConsti(x+1,y+1,z+1,0)), cellMax);
 
 		uint32_t keyIndex;
 		uint32_t dataIndex = _bvh8->FindCell(spatialKey, keyIndex);
@@ -107,8 +108,8 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 					SVec128 exMin = EVecMin(_bvh8->m_dataLookup[keyIndex].m_BoundsMin, triMin);
 					SVec128 exMax = EVecMax(_bvh8->m_dataLookup[keyIndex].m_BoundsMax, triMax);
 					// Clip to maximum cell bounds
-					_bvh8->m_dataLookup[keyIndex].m_BoundsMin = exMin;//EVecMax(cellMin, exMin);
-					_bvh8->m_dataLookup[keyIndex].m_BoundsMax = exMax;//EVecMin(cellMax, exMax);
+					_bvh8->m_dataLookup[keyIndex].m_BoundsMin = EVecMax(cellMin, exMin);
+					_bvh8->m_dataLookup[keyIndex].m_BoundsMax = EVecMin(cellMax, exMax);
 
 					// Append new triangle index
 					leaf->m_triangleIndices[leaf->m_numTriangles] = i;
