@@ -20,6 +20,7 @@
 #define MAX_NODE_TRIS 40
 // Depth of traversal stack
 #define MAX_STACK_ENTRIES 16
+
 // Define this to ignore triangles and work with BVH child nodes only, and see in x-ray vision
 //#define IGNORE_CHILD_DATA
 
@@ -610,7 +611,43 @@ int SDL_main(int _argc, char** _argv)
 				// Scene
 				uint32_t marchCount = 0;
 				uint32_t hitID = 0xFFFFFFFF;
-				SVec128 hitpos;
+				SVec128 hitpos = rayOrigin;
+
+				float final = 0.f;
+				SVec128 nrm;
+				int color = 0;
+
+#ifdef FOG_WORK
+				// Mesh fog attempt
+				int intersectioncount = 0;
+				SVec128 forwardepsilon{0.02f, 0.02f, 0.02f, 0.f};
+				SVec128 viewRay = EVecNorm3(traceRay);
+				float F = 0.001f;
+				for (int i=0; i<12; ++i)
+				{
+					// Find ray exit
+					t = 512.f;
+					SVec128 exitpos;
+					traceBVH8(testBVH8, marchCount, t, hitpos, hitID, traceRay, invRay, exitpos);
+
+					if (hitID != 0xFFFFFFFF)
+					{
+						if (intersectioncount%2==1)
+							F += 1.f-expf(-EVecGetFloatX(EVecLen3(EVecSub(hitpos, exitpos))));
+						hitpos = EVecAdd(exitpos, EVecMul(viewRay, forwardepsilon));
+						++intersectioncount;
+					}
+					else
+					{
+						F += 0.01f;
+						break;
+					}
+				}
+				final += 1.f-expf(-F*F*1.f);
+				color = int(final*255.f);
+
+#else
+
 				traceBVH8(testBVH8, marchCount, t, rayOrigin, hitID, traceRay, invRay, hitpos);
 				maxTraces = EMaximum(maxTraces, marchCount);
 
@@ -634,46 +671,7 @@ int SDL_main(int _argc, char** _argv)
 				// Shadow, only if we hit some geometry
 #ifdef IGNORE_CHILD_DATA
 				block(x,y, marchCount*6, marchCount*6, marchCount*6);
-#else
-				float final = 0.f;
-				SVec128 nrm;
-				int color = 0;
-
-#ifdef FOG_WORK
-				// Mesh fog attempt
-				int entrycount = 0;
-				if (hitID != 0xFFFFFFFF)
-				{
-					SVec128 forwardepsilon{0.02f, 0.02f, 0.02f, 0.f};
-					SVec128 viewRay = EVecNorm3(traceRay);
-					float F = 0.f;
-					for (int i=0; i<12; ++i)
-					{
-						// Offset forward
-						hitpos = EVecAdd(hitpos, EVecMul(viewRay, forwardepsilon));
-
-						// Find ray exit
-						t = 64.f;
-						SVec128 exitpos;
-						traceBVH8(testBVH8, marchCount, t, hitpos, hitID, traceRay, invRay, exitpos);
-
-						if (hitID != 0xFFFFFFFF)
-						{
-							if (entrycount%2==0)
-							{
-								F += 3.f*expf(-EVecGetFloatX(EVecLen3(EVecSub(hitpos, exitpos))));
-								hitpos = exitpos;
-							}
-						}
-						else
-							break;
-						++entrycount;
-					}
-					F = F/float(entrycount);
-					final += expf(-F*F*3.f);
-					color = int(final*255.f);
-				}
-#else
+#else // !IGNORE_CHILD_DATA
 				if (hitID != 0xFFFFFFFF)
 				{
 					SVec128 sunPos{20.f,35.f,20.f,1.f};
@@ -744,9 +742,9 @@ int SDL_main(int _argc, char** _argv)
 
 					color = int(final*64.f);
 				}
+#endif // IGNORE_CHILD_DATA
 #endif // FOG_WORK
 				block(x,y, color, color, color);
-#endif
 			}
 		}
 
