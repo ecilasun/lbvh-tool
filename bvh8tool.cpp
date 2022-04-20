@@ -41,8 +41,8 @@ struct hitinfo final {
 	float hitT;
 };
 
-uint32_t width = 1280;
-uint32_t height = 960;
+uint32_t width = 640;
+uint32_t height = 480;
 
 uint8_t* pixels;
 triangle *testtris;
@@ -457,8 +457,8 @@ int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32_t& marchCount, float& t, 
 
 void block(int x, int y, uint8_t B, uint8_t G, uint8_t R)
 {
-	for (int oy=y;oy<y+4;++oy)
-	for (int ox=x;ox<x+4;++ox)
+	for (int oy=y;oy<y+2;++oy)
+	for (int ox=x;ox<x+2;++ox)
 	{
 		pixels[(ox+oy*width)*4+0] = B;
 		pixels[(ox+oy*width)*4+1] = G;
@@ -590,12 +590,15 @@ int SDL_main(int _argc, char** _argv)
 		uint32_t maxTraces = 0;
 		SVec128 nil{0.f, 0.f, 0.f, 0.f};
 		SVec128 epsilon{-0.02f, -0.02f, -0.02f, 0.f};
-		for (int y=0; y<height; y+=4)
+		static int EVENODD = 0;
+		EVENODD = (EVENODD+1)%4;
+		// Checkerboard
+		for (int y=(EVENODD%2)*2; y<height; y+=4)
 		{
 			float py = aspect * (float(height)/2.f-float(y))/float(height);
 			SVec128 pyVec{py,py,py,0.f};
 			SVec128 U = EVecMul(lookMat.r[1], pyVec);
-			for (int x=0; x<width; x+=4)
+			for (int x=(EVENODD/2)*2; x<width; x+=4)
 			{
 				float t = cameradistance*2.f;
 				SVec128 raylenvec{t,t,t,0.f};
