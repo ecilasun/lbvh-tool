@@ -15,9 +15,9 @@
 //#define FOG_WORK
 
 // Size of each cell in world units
-#define NODE_DIMENSION 0.6f
+//#define NODE_DIMENSION 0.6f
 // NOTE: Once there's a correct cell vs triangle test, this will be reduced
-#define MAX_NODE_TRIS 40
+#define MAX_NODE_TRIS 32
 // Depth of traversal stack
 #define MAX_STACK_ENTRIES 16
 
@@ -111,9 +111,38 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 	sceneMin = EVecFloor(sceneMin);
 	sceneMax = EVecCeiling(sceneMax);
 
+	// Find min ideal cell size
+	SVec128 maxcelledge{0.0f,0.0f,0.0f,0.f};
+	for (uint32_t i = 0; i < _numTriangles; ++i)
+	{
+		SVec128 triMin{FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX};
+		SVec128 triMax{-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX};
+
+		SVec128 v0 = _triangles[i].coords[0];
+		SVec128 v1 = _triangles[i].coords[1];
+		SVec128 v2 = _triangles[i].coords[2];
+
+		triMin = EVecMin(triMin, v0);
+		triMin = EVecMin(triMin, v1);
+		triMin = EVecMin(triMin, v2);
+
+		triMax = EVecMax(triMax, v0);
+		triMax = EVecMax(triMax, v1);
+		triMax = EVecMax(triMax, v2);
+
+		// Always grab longest edge
+		maxcelledge = EVecMax(EVecSub(triMax, triMin), maxcelledge);
+	}
+	float cellx = 2.f*EVecGetFloatX(maxcelledge);
+	float celly = 2.f*EVecGetFloatY(maxcelledge);
+	float cellz = 2.f*EVecGetFloatZ(maxcelledge);
+	float minCell = EMinimum(cellx, EMinimum(celly, cellz)) / float(MAX_NODE_TRIS);
+
+	printf("Using automatic cell size: %f\n", minCell);
+
 	// Set up grid bounds and cell scale
 	_bvh8->m_GridAABBMin = sceneMin;
-	_bvh8->m_GridCellSize = SVec128{NODE_DIMENSION, NODE_DIMENSION, NODE_DIMENSION, 0.f};
+	_bvh8->m_GridCellSize = SVec128{minCell, minCell, minCell, 0.f};
 
 	// Get scene span in cell units
 	uint32_t gridMin[3], gridMax[3];
@@ -592,7 +621,8 @@ int SDL_main(int _argc, char** _argv)
 		SVec128 epsilon{-0.02f, -0.02f, -0.02f, 0.f};
 		static int EVENODD = 0;
 		EVENODD = (EVENODD+1)%4;
-		// Checkerboard
+
+		// One of 4 tiles shaded per pass
 		for (int y=(EVENODD%2)*2; y<height; y+=4)
 		{
 			float py = aspect * (float(height)/2.f-float(y))/float(height);
@@ -673,7 +703,7 @@ int SDL_main(int _argc, char** _argv)
 
 				// Shadow, only if we hit some geometry
 #ifdef IGNORE_CHILD_DATA
-				block(x,y, marchCount*6, marchCount*6, marchCount*6);
+				color = marchCount*6;
 #else // !IGNORE_CHILD_DATA
 				if (hitID != 0xFFFFFFFF)
 				{
