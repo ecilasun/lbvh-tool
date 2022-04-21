@@ -12,13 +12,12 @@
 #include "bvh8.h"
 #include "objloader.h"
 
-// Fog prototype
-//#define FOG_WORK
+// Define this to get double-sided hits (i.e. no backface culling against incoming ray)
+#define DOUBLe_SIDED
 
-// Size of each cell in world units
-//#define NODE_DIMENSION 0.6f
 // NOTE: Once there's a correct cell vs triangle test, this will be reduced
 #define MAX_NODE_TRIS 32
+
 // Depth of traversal stack
 #define MAX_STACK_ENTRIES 16
 
@@ -36,9 +35,9 @@
 
 static bool g_done = false;
 static const uint32_t tilewidth = 4;
-static const uint32_t tileheight = 8;
-static const uint32_t width = 800;
-static const uint32_t height = 600;
+static const uint32_t tileheight = 4;
+static const uint32_t width = 512;
+static const uint32_t height = 512;
 static const uint32_t tilecountx = width/tilewidth;
 static const uint32_t tilecounty = height/tileheight;
 static const float cameradistance = 30.f;
@@ -339,8 +338,8 @@ float TriHit(SVec128& origin, SVec128& direction, SVec128& v1, SVec128& v2, SVec
     SVec128 s1 = EVecCross3(direction, e2);
 	SVec128 K = EVecDot3(s1, e1);
 
-#ifdef FOG_WORK
-	// Fog requires double-sided hits
+#if defined(DOUBLe_SIDED)
+	// No facing check in this case
 #else
 	if (EVecGetFloatX(K) >= 0.f)
 		return max_t; // Ignore backfacing (TODO: enable/disable this)
@@ -660,6 +659,22 @@ static int DispatcherThread(void *data)
 	return 0;
 }
 
+void EMorton2DDecode(const uint32_t morton, uint32_t &x, uint32_t &y)
+{
+  uint32_t res = morton&0x5555555555555555;
+  res=(res|(res>>1)) & 0x3333333333333333;
+  res=(res|(res>>2)) & 0x0f0f0f0f0f0f0f0f;
+  res=(res|(res>>4)) & 0x00ff00ff00ff00ff;
+  res=res|(res>>8);
+  x = res;
+  res = (morton>>1)&0x5555555555555555;
+  res=(res|(res>>1)) & 0x3333333333333333;
+  res=(res|(res>>2)) & 0x0f0f0f0f0f0f0f0f;
+  res=(res|(res>>4)) & 0x00ff00ff00ff00ff;
+  res=res|(res>>8);
+  y = res;
+}
+
 #if defined(PLATFORM_LINUX)
 int main(int _argc, char** _argv)
 #else
@@ -804,8 +819,11 @@ int SDL_main(int _argc, char** _argv)
 			{
 				if (wc[i].dispatchvector.FreeSpace()!=0) // We have space in this worker's queue
 				{
-					if (workunit < tilecountx*tilecounty) // Ran out of tiles yet?
-						wc[i].dispatchvector.Write(&workunit, sizeof(uint32_t));
+					uint32_t x, y;
+					EMorton2DDecode(workunit, x, y);
+					uint32_t mortonindex = x+y*tilecountx;
+					if (mortonindex < tilecountx*tilecounty) // Ran out of tiles yet?
+						wc[i].dispatchvector.Write(&mortonindex, sizeof(uint32_t));
 					else
 						distributedAll = 1; // Done with all tiles
 					// Next tile
