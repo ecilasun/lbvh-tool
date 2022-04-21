@@ -13,7 +13,7 @@
 #include "objloader.h"
 
 // Define this to get double-sided hits (i.e. no backface culling against incoming ray)
-#define DOUBLe_SIDED
+//#define DOUBLE_SIDED
 
 // NOTE: Once there's a correct cell vs triangle test, this will be reduced
 #define MAX_NODE_TRIS 32
@@ -338,7 +338,7 @@ float TriHit(SVec128& origin, SVec128& direction, SVec128& v1, SVec128& v2, SVec
     SVec128 s1 = EVecCross3(direction, e2);
 	SVec128 K = EVecDot3(s1, e1);
 
-#if defined(DOUBLe_SIDED)
+#if defined(DOUBLE_SIDED)
 	// No facing check in this case
 #else
 	if (EVecGetFloatX(K) >= 0.f)
