@@ -25,14 +25,20 @@
 // Define this to ignore triangles and work with BVH child nodes only, and see in x-ray vision
 //#define IGNORE_CHILD_DATA
 
+// Define to see traversal count per tile
+//#define SHOW_HEATMAP
+
+// Define this to get worker tile debug view
+//#define SHOW_WORKER_TILES
+
 // Number of worker threads
 #define MAX_WORKERS 8
 
 static bool g_done = false;
-static const uint32_t tilewidth = 8;
-static const uint32_t tileheight = 4;
-static const uint32_t width = 640;
-static const uint32_t height = 480;
+static const uint32_t tilewidth = 4;
+static const uint32_t tileheight = 8;
+static const uint32_t width = 800;
+static const uint32_t height = 600;
 static const uint32_t tilecountx = width/tilewidth;
 static const uint32_t tilecounty = height/tileheight;
 static const float cameradistance = 30.f;
@@ -58,7 +64,7 @@ struct SWorkerContext
 {
 	uint32_t workerID{0};
 	SRenderContext *rc;
-	CLocklessPipe<8> dispatchvector; // 256 byte queue per worker
+	CLocklessPipe<10> dispatchvector; // 1024 byte queue per worker
 };
 
 // NOTE: This structure is very expensive for E32E, a data reduction method has to be applied here.
@@ -477,7 +483,7 @@ int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32_t& marchCount, float& t, 
 			hitID=currentNode;
 			SlabTest(subminbounds, submaxbounds, startPos, deltaVec, invDeltaVec, hitPos, exitpos);
 			t = EVecGetFloatX(EVecLen3(EVecSub(hitPos, startPos)));
-			//return 1; // NOTE: no 'hit' returned since we want x-ray vision
+			return 1; // NOTE: do not return to generate an x-ray view
 #else
 
 			// Default inline hit test returning hit position
@@ -629,11 +635,23 @@ static int DispatcherThread(void *data)
 							final *= 0.85f;*/
 					}
 
+#if defined(SHOW_HEATMAP)
+					uint8_t C = marchCount*4;
+#else
 					uint8_t C = uint8_t(final*255.f);
-					p[(ix+iy*width)*4+0] = (vec->workerID==2) ? 255:C; // B
-					p[(ix+iy*width)*4+1] = (vec->workerID==1) ? 255:C; // G
-					p[(ix+iy*width)*4+2] = (vec->workerID==0) ? 255:C; // R
+#endif
+
+#if defined(SHOW_WORKER_TILES)
+					p[(ix+iy*width)*4+0] = (vec->workerID&4) ? 128:C; // B
+					p[(ix+iy*width)*4+1] = (vec->workerID&2) ? 128:C; // G
+					p[(ix+iy*width)*4+2] = (vec->workerID&1) ? 128:C; // R
 					p[(ix+iy*width)*4+3] = 0xFF;
+#else
+					p[(ix+iy*width)*4+0] = C; // B
+					p[(ix+iy*width)*4+1] = C; // G
+					p[(ix+iy*width)*4+2] = C; // R
+					p[(ix+iy*width)*4+3] = 0xFF;
+#endif
 				}
 			}
 		}
@@ -774,6 +792,9 @@ int SDL_main(int _argc, char** _argv)
 		rc.F = EVecMul(rc.lookMat.r[2], rc.pzVec);
 		rc.pixels = (uint8_t*)surface->pixels;
 		rc.maxTraces = 0;
+
+		// Clear output
+		//memset(rc.pixels, 0x00, width*height*4);
 
 		int distributedAll = 0;
 		uint32_t workunit = 0;
