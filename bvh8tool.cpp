@@ -25,6 +25,9 @@
 // Define this to ignore triangles and work with BVH child nodes only, and see in x-ray vision
 //#define IGNORE_CHILD_DATA
 
+// Number of worker threads
+#define MAX_WORKERS 8
+
 static bool g_done = false;
 static const uint32_t tilewidth = 8;
 static const uint32_t tileheight = 4;
@@ -737,17 +740,14 @@ int SDL_main(int _argc, char** _argv)
 	uint32_t highTraces = 0x00000000;
 
 	SRenderContext rc;
-	SWorkerContext wc[4];
-	for (uint32_t i=0; i<4; ++i)
+	SWorkerContext wc[MAX_WORKERS];
+	SDL_Thread *thrd[MAX_WORKERS];
+	for (uint32_t i=0; i<MAX_WORKERS; ++i)
 	{
 		wc[i].workerID = i;
 		wc[i].rc = &rc;
+		thrd[i] = SDL_CreateThread(DispatcherThread, "Dispatch00", (void*)&wc[i]);
 	}
-
-	SDL_Thread *thrd00 = SDL_CreateThread(DispatcherThread, "Dispatch00", (void*)&wc[0]);
-	SDL_Thread *thrd01 = SDL_CreateThread(DispatcherThread, "Dispatch01", (void*)&wc[1]);
-	SDL_Thread *thrd02 = SDL_CreateThread(DispatcherThread, "Dispatch02", (void*)&wc[2]);
-	SDL_Thread *thrd03 = SDL_CreateThread(DispatcherThread, "Dispatch03", (void*)&wc[3]);
 
 	rc.rotAng = 0.f;
 	rc.aspect = float(height) / float(width);
@@ -779,7 +779,7 @@ int SDL_main(int _argc, char** _argv)
 		uint32_t workunit = 0;
 		do {
 			// Distribute all tiles across all work queues
-			for (uint32_t i=0; i<4; ++i)
+			for (uint32_t i=0; i<MAX_WORKERS; ++i)
 			{
 				if (wc[i].dispatchvector.FreeSpace()!=0) // We have space in this worker's queue
 				{
@@ -787,10 +787,11 @@ int SDL_main(int _argc, char** _argv)
 						wc[i].dispatchvector.Write(&workunit, sizeof(uint32_t));
 					else
 						distributedAll = 1; // Done with all tiles
+					// Next tile
 					workunit++;
 				}
 			}
-		} while (!distributedAll);
+		} while (!distributedAll); // We're done handing out jobs
 
 		// Rotate
 		rc.rotAng += 0.01f;
@@ -810,11 +811,11 @@ int SDL_main(int _argc, char** _argv)
 
 	g_done = true;
 
-	int threadReturnValue;
-	SDL_WaitThread(thrd03, &threadReturnValue);
-	SDL_WaitThread(thrd02, &threadReturnValue);
-	SDL_WaitThread(thrd01, &threadReturnValue);
-	SDL_WaitThread(thrd00, &threadReturnValue);
+	for (uint32_t i=0; i<MAX_WORKERS; ++i)
+	{
+		int threadReturnValue;
+		SDL_WaitThread(thrd[i], &threadReturnValue);
+	}
 
 	// Done
 	SDL_FreeSurface(surface);
