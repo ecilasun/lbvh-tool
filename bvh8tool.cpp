@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include "math.h"
+#include "locklesspipe.h"
 #include "bvh8.h"
 #include "objloader.h"
 
@@ -23,6 +24,39 @@
 
 // Define this to ignore triangles and work with BVH child nodes only, and see in x-ray vision
 //#define IGNORE_CHILD_DATA
+
+static bool g_done = false;
+static const uint32_t tilewidth = 8;
+static const uint32_t tileheight = 4;
+static const uint32_t width = 640;
+static const uint32_t height = 480;
+static const uint32_t tilecountx = width/tilewidth;
+static const uint32_t tilecounty = height/tileheight;
+static const float cameradistance = 30.f;
+
+struct SRenderContext
+{
+	float rotAng{0.f};
+	float aspect{float(height) / float(width)};
+
+	SVec128 rayOrigin;
+	SVec128 lookAt;
+	SVec128 upVec;
+	SMatrix4x4 lookMat;
+	SVec128 pzVec;
+	SVec128 F;
+	uint32_t maxTraces{0};
+	SVec128 nil{0.f, 0.f, 0.f, 0.f};
+	SVec128 epsilon{-0.02f, -0.02f, -0.02f, 0.f};
+	uint8_t* pixels;
+};
+
+struct SWorkerContext
+{
+	uint32_t workerID{0};
+	SRenderContext *rc;
+	CLocklessPipe<8> dispatchvector; // 256 byte queue per worker
+};
 
 // NOTE: This structure is very expensive for E32E, a data reduction method has to be applied here.
 // One approach could be to only stash connected triangle fans here.
@@ -41,10 +75,7 @@ struct hitinfo final {
 	float hitT;
 };
 
-uint32_t width = 640;
-uint32_t height = 480;
-
-uint8_t* pixels;
+//uint8_t* pixels;
 triangle *testtris;
 
 SBVH8Database<BVH8LeafNode>* testBVH8;
@@ -484,16 +515,128 @@ int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32_t& marchCount, float& t, 
 	return 0;
 }
 
-void block(int x, int y, uint8_t B, uint8_t G, uint8_t R)
+static int DispatcherThread(void *data)
 {
-	for (int oy=y;oy<y+2;++oy)
-	for (int ox=x;ox<x+2;++ox)
+	SWorkerContext *vec = (SWorkerContext *)(data);
+	while(!g_done)
 	{
-		pixels[(ox+oy*width)*4+0] = B;
-		pixels[(ox+oy*width)*4+1] = G;
-		pixels[(ox+oy*width)*4+2] = R;
-		pixels[(ox+oy*width)*4+3] = 0xFF;
+		uint32_t workItem = 0xFFFFFFFF;
+		if (vec->dispatchvector.Read(&workItem, sizeof(uint32_t)))
+		{
+			// x/y tile indices
+			uint32_t tx = workItem%tilecountx;
+			uint32_t ty = workItem/tilecountx;
+
+			// Upper left pixel position
+			uint32_t ox = tx*tilewidth;
+			uint32_t oy = ty*tileheight;
+
+			uint8_t *p = vec->rc->pixels;
+			for (uint32_t iy = oy; iy<oy+tileheight; ++iy)
+			{
+				float py = vec->rc->aspect * (float(height)/2.f-float(iy))/float(height);
+				for (uint32_t ix = ox; ix<ox+tilewidth; ++ix)
+				{
+					float px = (float(ix) - float(width)/2.f)/float(width);
+
+					float t = cameradistance*2.f;
+
+					SVec128 pyVec{py,py,py,0.f};
+					SVec128 U = EVecMul(vec->rc->lookMat.r[1], pyVec);
+					SVec128 raylenvec{t,t,t,0.f};
+					SVec128 pxVec{px,px,px,0.f};
+					SVec128 L = EVecMul(vec->rc->lookMat.r[0], pxVec);
+					SVec128 traceRay = EVecMul(EVecAdd(EVecAdd(L, U), vec->rc->F), raylenvec);
+					SVec128 invRay = EVecRcp(traceRay);
+
+					uint32_t hitID = 0xFFFFFFFF;
+					SVec128 hitpos = EVecAdd(vec->rc->rayOrigin, traceRay);
+					uint32_t marchCount = 0;
+
+					traceBVH8(testBVH8, marchCount, t, vec->rc->rayOrigin, hitID, traceRay, invRay, hitpos);
+
+					float final = 0.f;
+
+					if (hitID != 0xFFFFFFFF)
+					{
+						SVec128 sunPos{20.f,35.f,20.f,1.f};
+						SVec128 sunRay = EVecSub(sunPos, hitpos);
+						SVec128 invSunRay = EVecRcp(sunRay);
+						SVec128 nrm;
+
+						// Global + NdotL
+						{
+							SVec128 uvw;
+							Barycentrics(hitpos,
+								testtris[hitID].coords[0],
+								testtris[hitID].coords[1],
+								testtris[hitID].coords[2], uvw);
+							SVec128 uvwx = EVecSplatX(uvw);
+							SVec128 uvwy = EVecSplatY(uvw);
+							SVec128 uvwz = EVecSplatZ(uvw);
+							SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
+							SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
+							SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
+							nrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
+							float L = fabs(EVecGetFloatX(EVecDot3(nrm, EVecNorm3(sunRay))));
+							final += L;
+						}
+
+						// Hit position bias/offset
+						SVec128 viewRay = EVecNorm3(traceRay);
+						hitpos = EVecAdd(hitpos, EVecMul(viewRay, vec->rc->epsilon));
+
+						// Reflections
+						/*float tr = cameradistance*2.f;
+						hitID = 0xFFFFFFFF;
+						SVec128 reflHitPos;
+						//r = viewRay-2*dot(viewRay, n)*n;
+						SVec128 two{2.f,2.f,2.f,0.f};
+						//SVec128 negone{-1.f,-1.f,-1.f,0.f};
+						SVec128 negViewRay = viewRay;//EVecMul(negone, viewRay);
+						SVec128 reflRay = EVecMul(EVecSub(negViewRay, EVecMul(EVecDot3(negViewRay, nrm), EVecMul(two, nrm))), raylenvec);
+						SVec128 invReflRay = EVecRcp(reflRay);
+						traceBVH8(testBVH8, marchCount, tr, hitpos, hitID, reflRay, invReflRay, reflHitPos);
+						if (hitID != 0xFFFFFFFF)
+						{
+							SVec128 uvw;
+							Barycentrics(reflHitPos,
+								testtris[hitID].coords[0],
+								testtris[hitID].coords[1],
+								testtris[hitID].coords[2], uvw);
+							SVec128 uvwx = EVecSplatX(uvw);
+							SVec128 uvwy = EVecSplatY(uvw);
+							SVec128 uvwz = EVecSplatZ(uvw);
+							SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
+							SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
+							SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
+							SVec128 rnrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
+							float rL = fabs(EVecGetFloatX(EVecDot3(rnrm, EVecNorm3(sunRay))));
+							float diminish = fabs(1.f/(64.f*tr+0.01f));
+							diminish = EMinimum(1.f, EMaximum(0.f, diminish));
+							final += rL*diminish;
+						}*/
+
+						// Shadow
+						/*float t2 = cameradistance*2.f;
+						hitID = 0xFFFFFFFF;
+						SVec128 shadowHitPos;
+						traceBVH8(testBVH8, marchCount, t2, hitpos, hitID, sunRay, invSunRay, shadowHitPos);
+						if (t2<1.f)
+							final *= 0.85f;*/
+					}
+
+					uint8_t C = uint8_t(final*255.f);
+					p[(ix+iy*width)*4+0] = (vec->workerID==2) ? 255:C; // B
+					p[(ix+iy*width)*4+1] = (vec->workerID==1) ? 255:C; // G
+					p[(ix+iy*width)*4+2] = (vec->workerID==0) ? 255:C; // R
+					p[(ix+iy*width)*4+3] = 0xFF;
+				}
+			}
+		}
 	}
+
+	return 0;
 }
 
 #if defined(PLATFORM_LINUX)
@@ -590,9 +733,26 @@ int SDL_main(int _argc, char** _argv)
     SDL_RenderPresent(renderer);
 
 	bool done = false;
-	const float cameradistance = 30.f;
 	uint32_t lowTraces = 0xFFFFFFFF;
 	uint32_t highTraces = 0x00000000;
+
+	SRenderContext rc;
+	SWorkerContext wc[4];
+	for (uint32_t i=0; i<4; ++i)
+	{
+		wc[i].workerID = i;
+		wc[i].rc = &rc;
+	}
+
+	SDL_Thread *thrd00 = SDL_CreateThread(DispatcherThread, "Dispatch00", (void*)&wc[0]);
+	SDL_Thread *thrd01 = SDL_CreateThread(DispatcherThread, "Dispatch01", (void*)&wc[1]);
+	SDL_Thread *thrd02 = SDL_CreateThread(DispatcherThread, "Dispatch02", (void*)&wc[2]);
+	SDL_Thread *thrd03 = SDL_CreateThread(DispatcherThread, "Dispatch03", (void*)&wc[3]);
+
+	rc.rotAng = 0.f;
+	rc.aspect = float(height) / float(width);
+	rc.nil = SVec128{0.f, 0.f, 0.f, 0.f};
+	rc.epsilon = SVec128{-0.02f, -0.02f, -0.02f, 0.f};
 
 	do{
 		SDL_Event event;
@@ -605,187 +765,39 @@ int SDL_main(int _argc, char** _argv)
 		if (SDL_MUSTLOCK(surface))
 			SDL_LockSurface(surface);
 		
-		static float rotAng = 0.f;
-		float aspect = float(height) / float(width);
+		// Set up camera data
+		rc.rayOrigin = SVec128{sinf(rc.rotAng)*cameradistance, (1.f+sinf(rc.rotAng*0.5f))*cameradistance*0.5f, cosf(rc.rotAng)*cameradistance, 1.f};
+		rc.lookAt = SVec128{0.f,0.f,0.f,1.f};
+		rc.upVec = SVec128{0.f,1.f,0.f,0.f};
+		rc.lookMat = EMatLookAtRightHanded(rc.rayOrigin, rc.lookAt, rc.upVec);
+		rc.pzVec = SVec128{-1.f,-1.f,-1.f,0.f};
+		rc.F = EVecMul(rc.lookMat.r[2], rc.pzVec);
+		rc.pixels = (uint8_t*)surface->pixels;
+		rc.maxTraces = 0;
 
-		SVec128 rayOrigin{sinf(rotAng)*cameradistance, (1.f+sinf(rotAng*0.5f))*cameradistance*0.5f, cosf(rotAng)*cameradistance, 1.f};
-		SVec128 lookAt{0.f,0.f,0.f,1.f};
-		SVec128 upVec{0.f,1.f,0.f,0.f};
-		SMatrix4x4 lookMat = EMatLookAtRightHanded(rayOrigin, lookAt, upVec);
-		SVec128 pzVec{-1.f,-1.f,-1.f,0.f};
-		SVec128 F = EVecMul(lookMat.r[2], pzVec);
-
-		pixels = (uint8_t*)surface->pixels;
-		uint32_t maxTraces = 0;
-		SVec128 nil{0.f, 0.f, 0.f, 0.f};
-		SVec128 epsilon{-0.02f, -0.02f, -0.02f, 0.f};
-		static int EVENODD = 0;
-		EVENODD = (EVENODD+1)%4;
-
-		// One of 4 tiles shaded per pass
-		for (int y=(EVENODD%2)*2; y<height; y+=4)
-		{
-			float py = aspect * (float(height)/2.f-float(y))/float(height);
-			SVec128 pyVec{py,py,py,0.f};
-			SVec128 U = EVecMul(lookMat.r[1], pyVec);
-			for (int x=(EVENODD/2)*2; x<width; x+=4)
+		int distributedAll = 0;
+		uint32_t workunit = 0;
+		do {
+			// Distribute all tiles across all work queues
+			for (uint32_t i=0; i<4; ++i)
 			{
-				float t = cameradistance*2.f;
-				SVec128 raylenvec{t,t,t,0.f};
-
-				// Rotating camera
-				float px = (float(x) - float(width)/2.f)/float(width);
-				SVec128 pxVec{px,px,px,0.f};
-				SVec128 L = EVecMul(lookMat.r[0], pxVec);
-				//SVec128 traceRay = EVecAdd(EVecAdd(L, U), F);
-				SVec128 traceRay = EVecMul(EVecAdd(EVecAdd(L, U), F), raylenvec);
-				SVec128 invRay = EVecRcp(traceRay);
-
-				// Scene
-				uint32_t marchCount = 0;
-				uint32_t hitID = 0xFFFFFFFF;
-				SVec128 hitpos = rayOrigin;
-
-				float final = 0.f;
-				SVec128 nrm;
-				int color = 0;
-
-#ifdef FOG_WORK
-				// Mesh fog attempt
-				int intersectioncount = 0;
-				SVec128 forwardepsilon{0.02f, 0.02f, 0.02f, 0.f};
-				SVec128 viewRay = EVecNorm3(traceRay);
-				float F = 0.001f;
-				for (int i=0; i<12; ++i)
+				if (wc[i].dispatchvector.FreeSpace()!=0) // We have space in this worker's queue
 				{
-					// Find ray exit
-					t = 512.f;
-					SVec128 exitpos;
-					traceBVH8(testBVH8, marchCount, t, hitpos, hitID, traceRay, invRay, exitpos);
-
-					if (hitID != 0xFFFFFFFF)
-					{
-						if (intersectioncount%2==1)
-							F += 1.f-expf(-EVecGetFloatX(EVecLen3(EVecSub(hitpos, exitpos))));
-						hitpos = EVecAdd(exitpos, EVecMul(viewRay, forwardepsilon));
-						++intersectioncount;
-					}
+					if (workunit < tilecountx*tilecounty) // Ran out of tiles yet?
+						wc[i].dispatchvector.Write(&workunit, sizeof(uint32_t));
 					else
-					{
-						F += 0.01f;
-						break;
-					}
+						distributedAll = 1; // Done with all tiles
+					workunit++;
 				}
-				final += 1.f-expf(-F*F*1.f);
-				color = int(final*255.f);
-
-#else
-
-				traceBVH8(testBVH8, marchCount, t, rayOrigin, hitID, traceRay, invRay, hitpos);
-				maxTraces = EMaximum(maxTraces, marchCount);
-
-				/*if (hitID!=0xFFFFFFFF) // HAVE_HIT: Ray hit a primitive in a leaf nodes
-				{
-					// Hit position
-					//hitpos = EVecAdd(rayOrigin, EVecMul(traceRay,  EVecConst(t-0.01f,t-0.01f,t-0.01f,1.f)));
-					// Barycentric coortinates for attribute interpolation
-					//SVec128 uvw;
-					//Barycentrics(hitpos, testtris[hitID].coords[0], testtris[hitID].coords[1], testtris[hitID].coords[2], uvw);
-					//block(x,y, ((hitID>>1)%2)*128, ((hitID>>1)%4)*64, ((hitID>>2)%8)*32);
-					float D = EVecGetFloatX(EVecLen3(hitpos));
-					int C = int(D*16.f);
-					block(x,y, C, C, C);
-				}
-				else
-				{
-					block(x,y, 0,0,0);
-				}*/
-
-				// Shadow, only if we hit some geometry
-#ifdef IGNORE_CHILD_DATA
-				color = marchCount*6;
-#else // !IGNORE_CHILD_DATA
-				if (hitID != 0xFFFFFFFF)
-				{
-					SVec128 sunPos{20.f,35.f,20.f,1.f};
-					SVec128 sunRay = EVecSub(sunPos, hitpos);
-					SVec128 invSunRay = EVecRcp(sunRay);
-
-					// Global + NdotL
-					{
-						SVec128 uvw;
-						Barycentrics(hitpos,
-							testtris[hitID].coords[0],
-							testtris[hitID].coords[1],
-							testtris[hitID].coords[2], uvw);
-						SVec128 uvwx = EVecSplatX(uvw);
-						SVec128 uvwy = EVecSplatY(uvw);
-						SVec128 uvwz = EVecSplatZ(uvw);
-						SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
-						SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
-						SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
-						nrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
-						float L = fabs(EVecGetFloatX(EVecDot3(nrm, EVecNorm3(sunRay))));
-						final += L;
-						final += fabs(EVecGetFloatY(nrm)*0.5f+0.5f); // global
-					}
-
-					// Hit position bias/offset
-					SVec128 viewRay = EVecNorm3(traceRay);
-					hitpos = EVecAdd(hitpos, EVecMul(viewRay, epsilon));
-
-					// Reflections
-					float tr = cameradistance*2.f;
-					hitID = 0xFFFFFFFF;
-					SVec128 reflHitPos;
-					//r = viewRay-2*dot(viewRay, n)*n;
-					SVec128 two{2.f,2.f,2.f,0.f};
-					//SVec128 negone{-1.f,-1.f,-1.f,0.f};
-					SVec128 negViewRay = viewRay;//EVecMul(negone, viewRay);
-					SVec128 reflRay = EVecMul(EVecSub(negViewRay, EVecMul(EVecDot3(negViewRay, nrm), EVecMul(two, nrm))), raylenvec);
-					SVec128 invReflRay = EVecRcp(reflRay);
-					traceBVH8(testBVH8, marchCount, tr, hitpos, hitID, reflRay, invReflRay, reflHitPos);
-					if (hitID != 0xFFFFFFFF)
-					{
-						SVec128 uvw;
-						Barycentrics(reflHitPos,
-							testtris[hitID].coords[0],
-							testtris[hitID].coords[1],
-							testtris[hitID].coords[2], uvw);
-						SVec128 uvwx = EVecSplatX(uvw);
-						SVec128 uvwy = EVecSplatY(uvw);
-						SVec128 uvwz = EVecSplatZ(uvw);
-						SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
-						SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
-						SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
-						SVec128 rnrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
-						float rL = fabs(EVecGetFloatX(EVecDot3(rnrm, EVecNorm3(sunRay))));
-						float diminish = fabs(1.f/(64.f*tr+0.01f));
-						diminish = EMinimum(1.f, EMaximum(0.f, diminish));
-						final += rL*diminish;
-					}
-
-					// Shadow
-					float t2 = cameradistance*2.f;
-					hitID = 0xFFFFFFFF;
-					SVec128 shadowHitPos;
-					traceBVH8(testBVH8, marchCount, t2, hitpos, hitID, sunRay, invSunRay, shadowHitPos);
-					if (t2<1.f)
-						final *= 0.85f;
-
-					color = int(final*64.f);
-				}
-#endif // IGNORE_CHILD_DATA
-#endif // FOG_WORK
-				block(x,y, color, color, color);
 			}
-		}
+		} while (!distributedAll);
 
-		lowTraces = EMinimum(maxTraces, lowTraces);
-		highTraces = EMaximum(maxTraces, highTraces);
-		printf("MaxTraces: %d Highest: %d Lowest: %d\n", maxTraces, highTraces, lowTraces);
+		// Rotate
+		rc.rotAng += 0.01f;
 
-		rotAng += 0.02f;
+		lowTraces = EMinimum(rc.maxTraces, lowTraces);
+		highTraces = EMaximum(rc.maxTraces, highTraces);
+		printf("MaxTraces: %d Highest: %d Lowest: %d\n", rc.maxTraces, highTraces, lowTraces);
 
 		if (SDL_MUSTLOCK(surface))
 			SDL_UnlockSurface(surface);
@@ -795,6 +807,14 @@ int SDL_main(int _argc, char** _argv)
 
 	delete [] testtris;
 	delete testBVH8;
+
+	g_done = true;
+
+	int threadReturnValue;
+	SDL_WaitThread(thrd03, &threadReturnValue);
+	SDL_WaitThread(thrd02, &threadReturnValue);
+	SDL_WaitThread(thrd01, &threadReturnValue);
+	SDL_WaitThread(thrd00, &threadReturnValue);
 
 	// Done
 	SDL_FreeSurface(surface);
