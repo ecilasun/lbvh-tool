@@ -28,16 +28,27 @@
 //#define SHOW_HEATMAP
 
 // Define this to get worker tile debug view
-//#define SHOW_WORKER_TILES
+#define SHOW_WORKER_TILES
 
 // Number of worker threads
 #define MAX_WORKERS 8
 
+// Define to use Morton curve order instead of scanline-first
+//#define USE_MORTON_ORDER
+
 static bool g_done = false;
+#if defined(USE_MORTON_ORDER)
 static const uint32_t tilewidth = 4;
 static const uint32_t tileheight = 4;
 static const uint32_t width = 512;
 static const uint32_t height = 512;
+#else
+// 320x240 but x2
+static const uint32_t tilewidth = 4;
+static const uint32_t tileheight = 8;
+static const uint32_t width = 640;
+static const uint32_t height = 480;
+#endif
 static const uint32_t tilecountx = width/tilewidth;
 static const uint32_t tilecounty = height/tileheight;
 static const float cameradistance = 30.f;
@@ -659,6 +670,7 @@ static int DispatcherThread(void *data)
 	return 0;
 }
 
+#if defined(USE_MORTON_ORDER)
 void EMorton2DDecode(const uint32_t morton, uint32_t &x, uint32_t &y)
 {
   uint32_t res = morton&0x5555555555555555;
@@ -674,6 +686,7 @@ void EMorton2DDecode(const uint32_t morton, uint32_t &x, uint32_t &y)
   res=res|(res>>8);
   y = res;
 }
+#endif
 
 #if defined(PLATFORM_LINUX)
 int main(int _argc, char** _argv)
@@ -819,6 +832,7 @@ int SDL_main(int _argc, char** _argv)
 			{
 				if (wc[i].dispatchvector.FreeSpace()!=0) // We have space in this worker's queue
 				{
+#if defined(USE_MORTON_ORDER)
 					uint32_t x, y;
 					EMorton2DDecode(workunit, x, y);
 					uint32_t mortonindex = x+y*tilecountx;
@@ -826,6 +840,12 @@ int SDL_main(int _argc, char** _argv)
 						wc[i].dispatchvector.Write(&mortonindex, sizeof(uint32_t));
 					else
 						distributedAll = 1; // Done with all tiles
+#else
+					if (workunit < tilecountx*tilecounty) // Ran out of tiles yet?
+						wc[i].dispatchvector.Write(&workunit, sizeof(uint32_t));
+					else
+						distributedAll = 1; // Done with all tiles
+#endif
 					// Next tile
 					workunit++;
 				}
