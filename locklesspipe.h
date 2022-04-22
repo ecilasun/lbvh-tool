@@ -6,15 +6,23 @@ template <uint8_t cbBufferSizeLog2>
 class CLocklessPipe
 {
 public:
-	CLocklessPipe() : m_blockingHelper(0), m_readOffset(0), m_writeOffset(0)
+	CLocklessPipe() : m_readOffset(0), m_writeOffset(0)
 	{
+#if defined(PLATFORM_WINDOWS)
 		m_pbBuffer = (uint8_t *)_aligned_malloc(c_cbBufferSize, E_CACHELINE_SIZE);
+#else
+		m_pbBuffer = (uint8_t *)aligned_alloc(c_cbBufferSize, E_CACHELINE_SIZE);
+#endif
 	}
 
 	~CLocklessPipe()
 	{
 		if (m_pbBuffer)
+#if defined(PLATFORM_WINDOWS)
 			_aligned_free(m_pbBuffer);
+#else
+			free(m_pbBuffer);
+#endif
 		m_pbBuffer = 0;
 	}
 
@@ -88,10 +96,8 @@ private:
 	const static size_t c_sizeMask = c_cbBufferSize - 1;
 	CLocklessPipe( const CLocklessPipe& ) = delete;
 	CLocklessPipe& operator =(const CLocklessPipe&) = delete;
-public:
-	EInterlockedInt m_blockingHelper;
 private:
-	EInterlockedInt m_readOffset;
-	EInterlockedInt m_writeOffset;
+	volatile uint32_t m_readOffset;
+	volatile uint32_t m_writeOffset;
 	uint8_t *m_pbBuffer;
 };
