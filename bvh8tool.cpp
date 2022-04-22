@@ -67,12 +67,12 @@ struct SRenderContext
 	uint32_t maxTraces{0};
 	SVec128 nil{0.f, 0.f, 0.f, 0.f};
 	SVec128 epsilon{-0.02f, -0.02f, -0.02f, 0.f};
-	uint8_t* pixels;
 };
 
 struct SWorkerContext
 {
 	uint32_t workerID{0};
+	uint8_t rasterTile[4*tilewidth*tileheight];
 	SRenderContext *rc;
 	CLocklessPipe<10> dispatchvector; // 1024 byte queue per worker
 };
@@ -94,7 +94,6 @@ struct hitinfo final {
 	float hitT;
 };
 
-//uint8_t* pixels;
 triangle *testtris;
 
 SBVH8Database<BVH8LeafNode>* testBVH8;
@@ -550,13 +549,13 @@ static int DispatcherThread(void *data)
 			uint32_t ox = tx*tilewidth;
 			uint32_t oy = ty*tileheight;
 
-			uint8_t *p = vec->rc->pixels;
-			for (uint32_t iy = oy; iy<oy+tileheight; ++iy)
+			uint8_t *p = vec->rasterTile;
+			for (uint32_t iy = 0; iy<tileheight; ++iy)
 			{
-				float py = vec->rc->aspect * (float(height)/2.f-float(iy))/float(height);
-				for (uint32_t ix = ox; ix<ox+tilewidth; ++ix)
+				float py = vec->rc->aspect * (float(height)/2.f-float(iy+oy))/float(height);
+				for (uint32_t ix = 0; ix<tilewidth; ++ix)
 				{
-					float px = (float(ix) - float(width)/2.f)/float(width);
+					float px = (float(ix+ox) - float(width)/2.f)/float(width);
 
 					float t = cameradistance*2.f;
 
@@ -652,15 +651,15 @@ static int DispatcherThread(void *data)
 #endif
 
 #if defined(SHOW_WORKER_TILES)
-					p[(ix+iy*width)*4+0] = (vec->workerID&4) ? 128:C; // B
-					p[(ix+iy*width)*4+1] = (vec->workerID&2) ? 128:C; // G
-					p[(ix+iy*width)*4+2] = (vec->workerID&1) ? 128:C; // R
-					p[(ix+iy*width)*4+3] = 0xFF;
+					p[(ix+iy*tilewidth)*4+0] = (vec->workerID&4) ? 128:C; // B
+					p[(ix+iy*tilewidth)*4+1] = (vec->workerID&2) ? 128:C; // G
+					p[(ix+iy*tilewidth)*4+2] = (vec->workerID&1) ? 128:C; // R
+					p[(ix+iy*tilewidth)*4+3] = 0xFF;
 #else
-					p[(ix+iy*width)*4+0] = C; // B
-					p[(ix+iy*width)*4+1] = C; // G
-					p[(ix+iy*width)*4+2] = C; // R
-					p[(ix+iy*width)*4+3] = 0xFF;
+					p[(ix+iy*tilewidth)*4+0] = C; // B
+					p[(ix+iy*tilewidth)*4+1] = C; // G
+					p[(ix+iy*tilewidth)*4+2] = C; // R
+					p[(ix+iy*tilewidth)*4+3] = 0xFF;
 #endif
 				}
 			}
@@ -793,6 +792,7 @@ int SDL_main(int _argc, char** _argv)
 		wc[i].workerID = i;
 		wc[i].rc = &rc;
 		thrd[i] = SDL_CreateThread(DispatcherThread, "Dispatch00", (void*)&wc[i]);
+		//thrd[i] = SDL_CreateThreadWithStackSize(DispatcherThread, nullptr, 131072, (void*)&wc[i]);
 	}
 
 	rc.rotAng = 0.f;
@@ -807,10 +807,7 @@ int SDL_main(int _argc, char** _argv)
 			if(event.type == SDL_QUIT || (event.type == SDL_KEYUP && event.key.keysym.sym == SDLK_ESCAPE))
 				done = true;
 		}
-
-		if (SDL_MUSTLOCK(surface))
-			SDL_LockSurface(surface);
-		
+	
 		// Set up camera data
 		rc.rayOrigin = SVec128{sinf(rc.rotAng)*cameradistance, (1.f+sinf(rc.rotAng*0.5f))*cameradistance*0.5f, cosf(rc.rotAng)*cameradistance, 1.f};
 		rc.lookAt = SVec128{0.f,0.f,0.f,1.f};
@@ -818,11 +815,7 @@ int SDL_main(int _argc, char** _argv)
 		rc.lookMat = EMatLookAtRightHanded(rc.rayOrigin, rc.lookAt, rc.upVec);
 		rc.pzVec = SVec128{-1.f,-1.f,-1.f,0.f};
 		rc.F = EVecMul(rc.lookMat.r[2], rc.pzVec);
-		rc.pixels = (uint8_t*)surface->pixels;
 		rc.maxTraces = 0;
-
-		// Clear output
-		//memset(rc.pixels, 0x00, width*height*4);
 
 		int distributedAll = 0;
 		uint32_t workunit = 0;
@@ -858,6 +851,21 @@ int SDL_main(int _argc, char** _argv)
 		lowTraces = EMinimum(rc.maxTraces, lowTraces);
 		highTraces = EMaximum(rc.maxTraces, highTraces);
 		printf("MaxTraces: %d Highest: %d Lowest: %d\n", rc.maxTraces, highTraces, lowTraces);
+
+		// Wait for all threads to be done with locked image pointer before updating window image
+		/*int tdone;
+		do
+		{
+			tdone = 0;
+			for (uint32_t i=0; i<MAX_WORKERS; ++i)
+				tdone += wc[i].dispatchvector.BytesAvailable() ? 0 : 1;
+		} while(tdone != MAX_WORKERS);*/
+
+		if (SDL_MUSTLOCK(surface))
+			SDL_LockSurface(surface);
+
+		// TODO: Copy tiles to their respective positions
+		//(uint8_t*)surface->pixels;
 
 		if (SDL_MUSTLOCK(surface))
 			SDL_UnlockSurface(surface);
