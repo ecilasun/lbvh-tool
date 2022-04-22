@@ -67,12 +67,13 @@ struct SRenderContext
 	uint32_t maxTraces{0};
 	SVec128 nil{0.f, 0.f, 0.f, 0.f};
 	SVec128 epsilon{-0.02f, -0.02f, -0.02f, 0.f};
+	uint8_t *pixels;
 };
 
 struct SWorkerContext
 {
 	uint32_t workerID{0};
-	uint8_t rasterTile[4*tilewidth*tileheight];
+	uint8_t rasterTile[4*tilewidth*tileheight]; // Internal rasterization tile (in hardware, to avoid arbitration need)
 	SRenderContext *rc;
 	CLocklessPipe<10> dispatchvector; // 1024 byte queue per worker
 };
@@ -663,6 +664,12 @@ static int DispatcherThread(void *data)
 #endif
 				}
 			}
+
+			// Copy to final surface
+			// In hardware, this is 32 bytes of data, so it's much less than a
+			// cache line size (which is 512 bits, i.e. 64 bytes)
+			for (uint32_t h=0;h<tileheight;++h)
+				memcpy(&vec->rc->pixels[4*(ox + (oy+h)*width)], &vec->rasterTile[h*tilewidth*4], tilewidth*4);
 		}
 	}
 
@@ -792,7 +799,6 @@ int SDL_main(int _argc, char** _argv)
 		wc[i].workerID = i;
 		wc[i].rc = &rc;
 		thrd[i] = SDL_CreateThread(DispatcherThread, "Dispatch00", (void*)&wc[i]);
-		//thrd[i] = SDL_CreateThreadWithStackSize(DispatcherThread, nullptr, 131072, (void*)&wc[i]);
 	}
 
 	rc.rotAng = 0.f;
@@ -807,7 +813,10 @@ int SDL_main(int _argc, char** _argv)
 			if(event.type == SDL_QUIT || (event.type == SDL_KEYUP && event.key.keysym.sym == SDLK_ESCAPE))
 				done = true;
 		}
-	
+
+		if (SDL_MUSTLOCK(surface))
+			SDL_LockSurface(surface);
+
 		// Set up camera data
 		rc.rayOrigin = SVec128{sinf(rc.rotAng)*cameradistance, (1.f+sinf(rc.rotAng*0.5f))*cameradistance*0.5f, cosf(rc.rotAng)*cameradistance, 1.f};
 		rc.lookAt = SVec128{0.f,0.f,0.f,1.f};
@@ -816,6 +825,7 @@ int SDL_main(int _argc, char** _argv)
 		rc.pzVec = SVec128{-1.f,-1.f,-1.f,0.f};
 		rc.F = EVecMul(rc.lookMat.r[2], rc.pzVec);
 		rc.maxTraces = 0;
+		rc.pixels = (uint8_t*)surface->pixels;
 
 		int distributedAll = 0;
 		uint32_t workunit = 0;
@@ -860,9 +870,6 @@ int SDL_main(int _argc, char** _argv)
 			for (uint32_t i=0; i<MAX_WORKERS; ++i)
 				tdone += wc[i].dispatchvector.BytesAvailable() ? 0 : 1;
 		} while(tdone != MAX_WORKERS);*/
-
-		if (SDL_MUSTLOCK(surface))
-			SDL_LockSurface(surface);
 
 		// TODO: Copy tiles to their respective positions
 		//(uint8_t*)surface->pixels;
