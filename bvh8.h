@@ -228,14 +228,13 @@ struct SBVH8Database
 	std::vector<BVH8NodeInfo> m_dataLookup;
 	// Data element per key. Optional, place your data items here if data access is needed.
 	std::vector<T> m_data;
-	float m_cellScale{ 1.f };
 	SVec128 m_GridAABBMin, m_GridCellSize;
 	uint32_t m_LodStart[MaxOctreeLevels]{};
 	uint32_t m_LodEnd[MaxOctreeLevels]{};
 	uint32_t m_RootBVH8Node{};
 	bool m_isSorted;
 
-	explicit SBVH8Database() : m_isSorted(false), m_cellScale(1.f)
+	explicit SBVH8Database() : m_isSorted(false)
 	{
 		m_data.reserve(16384);
 		m_dataLookup.reserve(16384);
@@ -424,6 +423,29 @@ struct SBVH8Database
 	void RemoveDuplicates()
 	{
 		m_dataLookup.erase( std::unique( m_dataLookup.begin(), m_dataLookup.end(), [](const BVH8NodeInfo& v1, const BVH8NodeInfo& v2) { return v1.m_SpatialKey == v2.m_SpatialKey; } ), m_dataLookup.end());
+	}
+
+	void SaveBVH8(const char *_fname)
+	{
+		FILE *fp = fopen(_fname, "wb");
+		if (fp)
+		{
+			uint32_t lookupcount = uint32_t(m_dataLookup.size());
+			uint32_t datacount = uint32_t(m_data.size());
+			float cellsize = EVecGetFloatX(m_GridCellSize);
+			float minx = EVecGetFloatX(m_GridAABBMin);
+			float miny = EVecGetFloatY(m_GridAABBMin);
+			float minz = EVecGetFloatZ(m_GridAABBMin);
+			fwrite(&lookupcount, sizeof(uint32_t), 1, fp);
+			fwrite(&datacount, sizeof(uint32_t), 1, fp);
+			fwrite(&cellsize, sizeof(float), 1, fp);
+			fwrite(&minx, sizeof(float), 1, fp);
+			fwrite(&miny, sizeof(float), 1, fp);
+			fwrite(&minz, sizeof(float), 1, fp);
+			fwrite(m_dataLookup.data(), sizeof(BVH8NodeInfo), m_dataLookup.size(), fp);
+			fwrite(m_data.data(), sizeof(T), m_data.size(), fp);
+			fclose(fp);
+		}
 	}
 
 	void GenerateBVH8()

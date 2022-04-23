@@ -28,7 +28,7 @@
 //#define SHOW_HEATMAP
 
 // Define this to get worker tile debug view
-#define SHOW_WORKER_TILES
+//#define SHOW_WORKER_TILES
 
 // Number of worker threads
 #define MAX_WORKERS 8
@@ -321,6 +321,7 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 
 	_bvh8->SortAscending(0, _bvh8->m_dataLookup.size());
 	_bvh8->GenerateBVH8();
+	_bvh8->SaveBVH8("cache.bv8");
 }
 
 void Barycentrics(SVec128& P, SVec128& v1, SVec128& v2, SVec128& v3, SVec128& uvw)
