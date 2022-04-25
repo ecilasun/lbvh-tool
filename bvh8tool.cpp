@@ -13,10 +13,10 @@
 #include "objloader.h"
 
 // Define this to get double-sided hits (i.e. no backface culling against incoming ray)
-//#define DOUBLE_SIDED
+#define DOUBLE_SIDED
 
 // NOTE: Once there's a correct cell vs triangle test, this will be reduced
-#define MAX_NODE_TRIS 32
+#define MAX_NODE_TRIS 48
 
 // Depth of traversal stack
 #define MAX_STACK_ENTRIES 16
@@ -188,10 +188,13 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 	float cellz = 2.f*EVecGetFloatZ(maxcelledge);
 	float minCell = EMinimum(cellx, EMinimum(celly, cellz)) / float(MAX_NODE_TRIS);
 
+minCell = 1.f;
 	printf("Using automatic cell size: %f\n", minCell);
 
+	_bvh8->LoadBVH8("cache.bv8");
+
 	// Set up grid bounds and cell scale
-	_bvh8->m_GridAABBMin = sceneMin;
+	/*_bvh8->m_GridAABBMin = sceneMin;
 	_bvh8->m_GridCellSize = SVec128{minCell, minCell, minCell, 0.f};
 
 	// Get scene span in cell units
@@ -321,7 +324,7 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 
 	_bvh8->SortAscending(0, _bvh8->m_dataLookup.size());
 	_bvh8->GenerateBVH8();
-	_bvh8->SaveBVH8("cache.bv8");
+	_bvh8->SaveBVH8("cache.bv8");*/
 }
 
 void Barycentrics(SVec128& P, SVec128& v1, SVec128& v2, SVec128& v3, SVec128& uvw)
@@ -584,8 +587,11 @@ static int DispatcherThread(void *data)
 						SVec128 invSunRay = EVecRcp(sunRay);
 						SVec128 nrm;
 
+						// Depth
+						final = t;
+
 						// Global + NdotL
-						{
+						/*{
 							SVec128 uvw;
 							Barycentrics(hitpos,
 								testtris[hitID].coords[0],
@@ -600,7 +606,7 @@ static int DispatcherThread(void *data)
 							nrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
 							float L = fabs(EVecGetFloatX(EVecDot3(nrm, EVecNorm3(sunRay))));
 							final += L;
-						}
+						}*/
 
 						// Hit position bias/offset
 						SVec128 viewRay = EVecNorm3(traceRay);
@@ -709,9 +715,9 @@ int SDL_main(int _argc, char** _argv)
 #endif
 
 	objl::Loader objloader;
-	if (!objloader.LoadFile("test.obj"))
+	if (!objloader.LoadFile("sibenik\\sibenik.obj"))
 	{
-		printf("Failed to load test.obj\n");
+		printf("Failed to load OBJ file\n");
 		return 1;
 	}
 

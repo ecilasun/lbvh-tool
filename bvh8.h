@@ -436,6 +436,12 @@ struct SBVH8Database
 			float minx = EVecGetFloatX(m_GridAABBMin);
 			float miny = EVecGetFloatY(m_GridAABBMin);
 			float minz = EVecGetFloatZ(m_GridAABBMin);
+			fwrite(&m_RootBVH8Node, sizeof(uint32_t), 1, fp);
+			for (int i=0;i<MaxOctreeLevels;++i)
+			{
+				fwrite(&m_LodStart[i], sizeof(uint32_t), 1, fp);
+				fwrite(&m_LodEnd[i], sizeof(uint32_t), 1, fp);
+			}
 			fwrite(&lookupcount, sizeof(uint32_t), 1, fp);
 			fwrite(&datacount, sizeof(uint32_t), 1, fp);
 			fwrite(&cellsize, sizeof(float), 1, fp);
@@ -444,6 +450,44 @@ struct SBVH8Database
 			fwrite(&minz, sizeof(float), 1, fp);
 			fwrite(m_dataLookup.data(), sizeof(BVH8NodeInfo), m_dataLookup.size(), fp);
 			fwrite(m_data.data(), sizeof(T), m_data.size(), fp);
+			fclose(fp);
+		}
+	}
+
+	void LoadBVH8(const char *_fname)
+	{
+		FILE *fp = fopen(_fname, "rb");
+		if (fp)
+		{
+			uint32_t lookupcount = 0;
+			uint32_t datacount = 0;
+			float cellsize = 1.f;
+			float minx = 0.f;
+			float miny = 0.f;
+			float minz = 0.f;
+			fread(&m_RootBVH8Node, sizeof(uint32_t), 1, fp);
+			for (int i=0;i<MaxOctreeLevels;++i)
+			{
+				fread(&m_LodStart[i], sizeof(uint32_t), 1, fp);
+				fread(&m_LodEnd[i], sizeof(uint32_t), 1, fp);
+			}
+			fread(&lookupcount, sizeof(uint32_t), 1, fp);
+			fread(&datacount, sizeof(uint32_t), 1, fp);
+
+			fread(&cellsize, sizeof(float), 1, fp);
+			m_GridCellSize = EVecConst(cellsize,cellsize,cellsize,0.f);
+
+			fread(&minx, sizeof(float), 1, fp);
+			fread(&miny, sizeof(float), 1, fp);
+			fread(&minz, sizeof(float), 1, fp);
+			m_GridAABBMin = EVecConst(minx, miny, minz, 0.f);
+
+			m_dataLookup.resize(lookupcount);
+			fread(m_dataLookup.data(), sizeof(BVH8NodeInfo), m_dataLookup.size(), fp);
+
+			m_data.resize(datacount);
+			fread(m_data.data(), sizeof(T), m_data.size(), fp);
+
 			fclose(fp);
 		}
 	}
