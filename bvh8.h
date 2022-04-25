@@ -454,7 +454,7 @@ struct SBVH8Database
 		}
 	}
 
-	void LoadBVH8(const char *_fname)
+	uint32_t LoadBVH8(const char *_fname)
 	{
 		FILE *fp = fopen(_fname, "rb");
 		if (fp)
@@ -489,7 +489,9 @@ struct SBVH8Database
 			fread(m_data.data(), sizeof(T), m_data.size(), fp);
 
 			fclose(fp);
+			return 1;
 		}
+		return 0;
 	}
 
 	void GenerateBVH8()
