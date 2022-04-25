@@ -16,7 +16,7 @@
 #define DOUBLE_SIDED
 
 // NOTE: Once there's a correct cell vs triangle test, this will be reduced
-#define MAX_NODE_TRIS 48
+#define MAX_NODE_TRIS 64
 
 // Depth of traversal stack
 #define MAX_STACK_ENTRIES 16
@@ -31,13 +31,13 @@
 //#define SHOW_HEATMAP
 
 // Define this to get worker tile debug view
-//#define SHOW_WORKER_TILES
+//#define SHOW_WORKER_IDS
 
 // Define this to show depth information only (no barycentrics/lighting etc)
 //#define SHOW_DEPTH
 
 // Number of worker threads
-#define MAX_WORKERS 8
+#define MAX_WORKERS 12
 
 // Define to use Morton curve order instead of scanline-first
 //#define USE_MORTON_ORDER
@@ -50,14 +50,15 @@ static const uint32_t width = 512;
 static const uint32_t height = 512;
 #else
 // 320x240 but x2
-static const uint32_t tilewidth = 4;
-static const uint32_t tileheight = 8;
+static const uint32_t tilewidth = 8;
+static const uint32_t tileheight = 16;
 static const uint32_t width = 640;
 static const uint32_t height = 480;
 #endif
 static const uint32_t tilecountx = width/tilewidth;
 static const uint32_t tilecounty = height/tileheight;
-static const float cameradistance = 30.f;
+static const float cameradistance = 20.f;
+static const float raylength = cameradistance + 100.f;
 
 struct SRenderContext
 {
@@ -70,7 +71,6 @@ struct SRenderContext
 	SMatrix4x4 lookMat;
 	SVec128 pzVec;
 	SVec128 F;
-	uint32_t maxTraces{0};
 	SVec128 nil{0.f, 0.f, 0.f, 0.f};
 	SVec128 epsilon{-0.02f, -0.02f, -0.02f, 0.f};
 	uint8_t *pixels;
@@ -194,7 +194,6 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 	float cellz = 2.f*EVecGetFloatZ(maxcelledge);
 	float minCell = EMinimum(cellx, EMinimum(celly, cellz)) / float(MAX_NODE_TRIS);
 
-minCell = 1.f;
 	printf("Using automatic cell size: %f\n", minCell);
 
 	if (_bvh8->LoadBVH8("cache.bv8") == 0) // Cannot load from cache, rebuild and cache result for next time
@@ -573,7 +572,7 @@ static int DispatcherThread(void *data)
 				{
 					float px = (float(ix+ox) - float(width)/2.f)/float(width);
 
-					float t = cameradistance*3.f;
+					float t = raylength;
 
 					SVec128 pyVec{py,py,py,0.f};
 					SVec128 U = EVecMul(vec->rc->lookMat.r[1], pyVec);
@@ -625,7 +624,7 @@ static int DispatcherThread(void *data)
 						hitpos = EVecAdd(hitpos, EVecMul(viewRay, vec->rc->epsilon));
 
 						// Reflections
-						/*float tr = cameradistance*3.f;
+						/*float tr = raylength;
 						hitID = 0xFFFFFFFF;
 						SVec128 reflHitPos;
 						//r = viewRay-2*dot(viewRay, n)*n;
@@ -656,7 +655,7 @@ static int DispatcherThread(void *data)
 						}*/
 
 						// Shadow
-						/*float t2 = cameradistance*3.f;
+						/*float t2 = raylength;
 						hitID = 0xFFFFFFFF;
 						SVec128 shadowHitPos;
 						traceBVH8(testBVH8, marchCount, t2, hitpos, hitID, sunRay, invSunRay, shadowHitPos);
@@ -671,7 +670,7 @@ static int DispatcherThread(void *data)
 					uint8_t C = uint8_t(final*255.f);
 #endif
 
-#if defined(SHOW_WORKER_TILES)
+#if defined(SHOW_WORKER_IDS)
 					p[(ix+iy*tilewidth)*4+0] = (vec->workerID&4) ? 128:C; // B
 					p[(ix+iy*tilewidth)*4+1] = (vec->workerID&2) ? 128:C; // G
 					p[(ix+iy*tilewidth)*4+2] = (vec->workerID&1) ? 128:C; // R
@@ -724,11 +723,11 @@ int SDL_main(int _argc, char** _argv)
 	// Console always there for Linux
 #else
 	HWND hWnd = GetConsoleWindow();
-	ShowWindow( hWnd, SW_HIDE );
+	ShowWindow( hWnd, SW_SHOW ); // In case it's not shown at startup
 #endif
 
 	objl::Loader objloader;
-	if (!objloader.LoadFile("sibenik\\sibenik.obj"))
+	if (!objloader.LoadFile("testscene\\test.obj"))
 	{
 		printf("Failed to load OBJ file\n");
 		return 1;
@@ -808,8 +807,6 @@ int SDL_main(int _argc, char** _argv)
     SDL_RenderPresent(renderer);
 
 	bool done = false;
-	uint32_t lowTraces = 0xFFFFFFFF;
-	uint32_t highTraces = 0x00000000;
 
 	SRenderContext rc;
 	SWorkerContext wc[MAX_WORKERS];
@@ -818,7 +815,7 @@ int SDL_main(int _argc, char** _argv)
 	{
 		wc[i].workerID = i;
 		wc[i].rc = &rc;
-		thrd[i] = SDL_CreateThread(DispatcherThread, "Dispatch00", (void*)&wc[i]);
+		thrd[i] = SDL_CreateThread(DispatcherThread, "DispatcherThread", (void*)&wc[i]);
 	}
 
 	rc.rotAng = 0.f;
@@ -844,7 +841,6 @@ int SDL_main(int _argc, char** _argv)
 		rc.lookMat = EMatLookAtRightHanded(rc.rayOrigin, rc.lookAt, rc.upVec);
 		rc.pzVec = SVec128{-1.f,-1.f,-1.f,0.f};
 		rc.F = EVecMul(rc.lookMat.r[2], rc.pzVec);
-		rc.maxTraces = 0;
 		rc.pixels = (uint8_t*)surface->pixels;
 
 		int distributedAll = 0;
@@ -877,10 +873,6 @@ int SDL_main(int _argc, char** _argv)
 
 		// Rotate
 		rc.rotAng += 0.01f;
-
-		lowTraces = EMinimum(rc.maxTraces, lowTraces);
-		highTraces = EMaximum(rc.maxTraces, highTraces);
-		printf("MaxTraces: %d Highest: %d Lowest: %d\n", rc.maxTraces, highTraces, lowTraces);
 
 		// Wait for all threads to be done with locked image pointer before updating window image
 		/*int tdone;
