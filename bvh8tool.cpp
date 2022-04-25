@@ -12,6 +12,13 @@
 #include "bvh8.h"
 #include "objloader.h"
 
+// Folder/file name of the scene to work with
+//#define SCENENAME "sibenik"
+#define SCENENAME "testscene"
+
+// Define to use 1.f as cell size
+//#define USE_UNIT_CELL
+
 // Define this to get double-sided hits (i.e. no backface culling against incoming ray)
 #define DOUBLE_SIDED
 
@@ -167,6 +174,9 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 	sceneMin = EVecFloor(sceneMin);
 	sceneMax = EVecCeiling(sceneMax);
 
+#ifdef USE_UNIT_CELL
+	float minCell = 1.f;
+#else
 	// Find min ideal cell size
 	SVec128 maxcelledge{0.0f,0.0f,0.0f,0.f};
 	for (uint32_t i = 0; i < _numTriangles; ++i)
@@ -193,10 +203,11 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 	float celly = 2.f*EVecGetFloatY(maxcelledge);
 	float cellz = 2.f*EVecGetFloatZ(maxcelledge);
 	float minCell = EMinimum(cellx, EMinimum(celly, cellz)) / float(MAX_NODE_TRIS);
+#endif
 
 	printf("Using automatic cell size: %f\n", minCell);
 
-	if (_bvh8->LoadBVH8("cache.bv8") == 0) // Cannot load from cache, rebuild and cache result for next time
+	if (_bvh8->LoadBVH8(SCENENAME ".cache.bv8") == 0) // Cannot load from cache, rebuild and cache result for next time
 	{
 		// Set up grid bounds and cell scale
 		_bvh8->m_GridAABBMin = sceneMin;
@@ -329,7 +340,7 @@ void bvh8Builder(triangle* _triangles, uint32_t _numTriangles, SBVH8Database<BVH
 
 		_bvh8->SortAscending(0, _bvh8->m_dataLookup.size());
 		_bvh8->GenerateBVH8();
-		_bvh8->SaveBVH8("cache.bv8");
+		_bvh8->SaveBVH8(SCENENAME ".cache.bv8");
 	}
 }
 
@@ -727,7 +738,7 @@ int SDL_main(int _argc, char** _argv)
 #endif
 
 	objl::Loader objloader;
-	if (!objloader.LoadFile("testscene\\test.obj"))
+	if (!objloader.LoadFile(SCENENAME "\\" SCENENAME ".obj"))
 	{
 		printf("Failed to load OBJ file\n");
 		return 1;
