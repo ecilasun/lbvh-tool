@@ -22,6 +22,15 @@
 // Define this to get double-sided hits (i.e. no backface culling against incoming ray)
 #define DOUBLE_SIDED
 
+// Define to enable reflections
+#define ENABLE_REFLECTIONS
+
+// Define to enable shadows
+//#define ENABLE_SHADOWS
+
+// Define to enable light occlusion or disable for NdotL
+//#define ENABLE_OCCLUSION
+
 // NOTE: Once there's a correct cell vs triangle test, this will be reduced
 #define MAX_NODE_TRIS 64
 
@@ -79,7 +88,8 @@ struct SRenderContext
 	SVec128 pzVec;
 	SVec128 F;
 	SVec128 nil{0.f, 0.f, 0.f, 0.f};
-	SVec128 epsilon{-0.02f, -0.02f, -0.02f, 0.f};
+	SVec128 epsilon{0.02f, 0.02f, 0.02f, 0.f};
+	SVec128 negepsilon{-0.02f, -0.02f, -0.02f, 0.f};
 	uint8_t *pixels;
 };
 
@@ -452,6 +462,75 @@ EInline int32_t BitCountLeadingZeroes32(uint32_t x)
 	#endif
 }
 
+int traceBVH8NoTris(SBVH8Database<BVH8LeafNode>* bvh, uint32_t& marchCount, float& t, SVec128& startPos, uint32_t& hitID, SVec128& deltaVec, SVec128& invDeltaVec, SVec128& hitPos)
+{
+	uint32_t traversalStack[MAX_STACK_ENTRIES]{};
+	int stackpointer = 0;
+
+	// Store root node to start travelsal with
+	traversalStack[stackpointer++] = bvh->m_LodStart[bvh->m_RootBVH8Node];
+
+	// Generate ray octant mask
+	uint32_t ray_octant = (EVecGetFloatX(deltaVec)<0.f ? 1:0) | (EVecGetFloatY(deltaVec)<0.f ? 2:0) | (EVecGetFloatZ(deltaVec)<0.f ? 4:0);
+
+	hitID = 0xFFFFFFFF; // Miss
+	hitPos = EVecAdd(startPos, deltaVec); // End of ray
+	t = 1.f;
+
+	// Trace until stack underflows
+	while (stackpointer > 0)
+	{
+		// Number of loops through until we find a hit
+		++marchCount;
+
+		--stackpointer;
+		uint32_t currentNode = traversalStack[stackpointer];
+
+		if (bvh->m_dataLookup[currentNode].m_ChildCount != 0)
+		{
+			uint32_t hitcells[8];
+			uint32_t octantallocationmask = GatherChildNodes(bvh, currentNode, startPos, ray_octant, deltaVec, invDeltaVec, hitcells);
+
+			uint32_t idx = BitCountLeadingZeroes32(octantallocationmask);
+			while (idx != 32)
+			{
+				// Convert to cell index
+				uint32_t cellindex = 31 - idx;
+
+				// Stack overflow
+				if (stackpointer > MAX_STACK_ENTRIES)
+					return -1;
+
+				// Push valid child nodes onto stack
+				traversalStack[stackpointer++] = hitcells[cellindex];
+
+				// Clear this bit for next iteration and get new index
+				octantallocationmask ^= (1 << cellindex);
+				idx = BitCountLeadingZeroes32(octantallocationmask);
+			}
+		}
+		else // Leaf node reached
+		{
+			// Time to invoke a 'hit test' callback and stop if we have an actual hit
+			// It is up to the hit test callback to determine which primitive in this cell is closest etc
+			/*if (leafNodeHitTest(currentNode, m_dataLookup[currentNode].m_DataIndex, this, ray, hit))
+				return 1;*/
+
+			SVec128 subminbounds = bvh->m_dataLookup[currentNode].m_BoundsMin;
+			SVec128 submaxbounds = bvh->m_dataLookup[currentNode].m_BoundsMax;
+			SVec128 exitpos;
+			hitID=currentNode;
+			SlabTest(subminbounds, submaxbounds, startPos, deltaVec, invDeltaVec, hitPos, exitpos);
+			t = EVecGetFloatX(EVecLen3(EVecSub(hitPos, startPos)));
+		#ifndef XRAY_MODE
+			return 1; // NOTE: do not return to generate an x-ray view
+		#endif
+		}
+	}
+
+	return 0;
+}
+
 int traceBVH8(SBVH8Database<BVH8LeafNode>* bvh, uint32_t& marchCount, float& t, SVec128& startPos, uint32_t& hitID, SVec128& deltaVec, SVec128& invDeltaVec, SVec128& hitPos)
 {
 	uint32_t traversalStack[MAX_STACK_ENTRIES]{};
@@ -612,6 +691,44 @@ static int DispatcherThread(void *data)
 						// Depth
 						final = t;
 #else
+						SVec128 viewRay = EVecNorm3(traceRay);
+
+#if defined(ENABLE_OCCLUSION)
+						{
+							SVec128 uvw;
+							Barycentrics(hitpos,
+								testtris[hitID].coords[0],
+								testtris[hitID].coords[1],
+								testtris[hitID].coords[2], uvw);
+							SVec128 uvwx = EVecSplatX(uvw);
+							SVec128 uvwy = EVecSplatY(uvw);
+							SVec128 uvwz = EVecSplatZ(uvw);
+							SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
+							SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
+							SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
+							nrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
+						}
+
+						hitpos = EVecAdd(EVecMul(nrm, EVecConst(1.2f,1.2f,1.2f,0.f)), hitpos);
+
+						float occsum = 0.f;
+						for(uint32_t i=0;i<8;++i)
+						{
+							SVec128 occHitPos;
+							float t2 = raylength;
+							hitID = 0xFFFFFFFF;
+							float rx = float(rand()%100-50);
+							float ry = float(rand()%100-50);
+							float rz = float(rand()%100-50);
+							SVec128 rray = EVecConst(rx, ry, rz, 0.f);
+							SVec128 randomRay = EVecMul(EVecNorm3(rray), raylenvec);
+							SVec128 invRandomRay = EVecRcp(randomRay);
+							occsum += float(traceBVH8NoTris(testBVH8, marchCount, t2, hitpos, hitID, randomRay, invRandomRay, occHitPos));
+						}
+						occsum /= 8.f;
+						occsum = 1.f-occsum;
+						final  = occsum;
+#else
 						// Global + NdotL
 						{
 							SVec128 uvw;
@@ -631,55 +748,64 @@ static int DispatcherThread(void *data)
 						}
 
 						// Hit position bias/offset
-						SVec128 viewRay = EVecNorm3(traceRay);
-						hitpos = EVecAdd(hitpos, EVecMul(viewRay, vec->rc->epsilon));
+						//hitpos = EVecAdd(hitpos, EVecMul(viewRay, vec->rc->negepsilon));
+						hitpos = EVecAdd(EVecMul(nrm, vec->rc->epsilon), hitpos);
+#endif // ENABLE_OCCLUSION
 
 						// Reflections
-						/*float tr = raylength;
-						hitID = 0xFFFFFFFF;
-						SVec128 reflHitPos;
-						//r = viewRay-2*dot(viewRay, n)*n;
-						SVec128 two{2.f,2.f,2.f,0.f};
-						//SVec128 negone{-1.f,-1.f,-1.f,0.f};
-						SVec128 negViewRay = viewRay;//EVecMul(negone, viewRay);
-						SVec128 reflRay = EVecMul(EVecSub(negViewRay, EVecMul(EVecDot3(negViewRay, nrm), EVecMul(two, nrm))), raylenvec);
-						SVec128 invReflRay = EVecRcp(reflRay);
-						traceBVH8(testBVH8, marchCount, tr, hitpos, hitID, reflRay, invReflRay, reflHitPos);
-						if (hitID != 0xFFFFFFFF)
+#if defined(ENABLE_REFLECTIONS)
 						{
-							SVec128 uvw;
-							Barycentrics(reflHitPos,
-								testtris[hitID].coords[0],
-								testtris[hitID].coords[1],
-								testtris[hitID].coords[2], uvw);
-							SVec128 uvwx = EVecSplatX(uvw);
-							SVec128 uvwy = EVecSplatY(uvw);
-							SVec128 uvwz = EVecSplatZ(uvw);
-							SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
-							SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
-							SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
-							SVec128 rnrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
-							float rL = fabs(EVecGetFloatX(EVecDot3(rnrm, EVecNorm3(sunRay))));
-							float diminish = fabs(1.f/(64.f*tr+0.01f));
-							diminish = EMinimum(1.f, EMaximum(0.f, diminish));
-							final += rL*diminish;
-						}*/
+							float tr = raylength;
+							hitID = 0xFFFFFFFF;
+							SVec128 reflHitPos;
+							//r = viewRay-2*dot(viewRay, n)*n;
+							SVec128 two{2.f,2.f,2.f,0.f};
+							//SVec128 negone{-1.f,-1.f,-1.f,0.f};
+							SVec128 negViewRay = viewRay;//EVecMul(negone, viewRay);
+							SVec128 reflRay = EVecMul(EVecSub(negViewRay, EVecMul(EVecDot3(negViewRay, nrm), EVecMul(two, nrm))), raylenvec);
+							SVec128 invReflRay = EVecRcp(reflRay);
+							traceBVH8(testBVH8, marchCount, tr, hitpos, hitID, reflRay, invReflRay, reflHitPos);
+							if (hitID != 0xFFFFFFFF)
+							{
+								SVec128 uvw;
+								Barycentrics(reflHitPos,
+									testtris[hitID].coords[0],
+									testtris[hitID].coords[1],
+									testtris[hitID].coords[2], uvw);
+								SVec128 uvwx = EVecSplatX(uvw);
+								SVec128 uvwy = EVecSplatY(uvw);
+								SVec128 uvwz = EVecSplatZ(uvw);
+								SVec128 uvwzA = EVecMul(uvwz, testtris[hitID].normals[0]); // A*uvw.zzz
+								SVec128 uvwyB = EVecMul(uvwy, testtris[hitID].normals[1]); // B*uvw.yyy
+								SVec128 uvwxC = EVecMul(uvwx, testtris[hitID].normals[2]); // C*uvw.xxx
+								SVec128 rnrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
+								float rL = fabs(EVecGetFloatX(EVecDot3(rnrm, EVecNorm3(sunRay))));
+								float diminish = fabs(1.f/(2.f*raylength*tr+0.01f));
+								diminish = EMinimum(1.f, EMaximum(0.f, diminish));
+								final += (final+rL*diminish)*0.5f;
+							}
+						}
+#endif // ENABLE_REFLECTIONS
 
 						// Shadow
-						/*float t2 = raylength;
-						hitID = 0xFFFFFFFF;
-						SVec128 shadowHitPos;
-						traceBVH8(testBVH8, marchCount, t2, hitpos, hitID, sunRay, invSunRay, shadowHitPos);
-						if (t2<1.f)
-							final *= 0.85f;*/
-#endif
+#if defined(ENABLE_SHADOWS)
+						{
+							float t2 = raylength;
+							hitID = 0xFFFFFFFF;
+							SVec128 shadowHitPos;
+							traceBVH8(testBVH8, marchCount, t2, hitpos, hitID, sunRay, invSunRay, shadowHitPos);
+							if (t2<1.f)
+								final *= 0.65f;
+						}
+#endif // ENABLE_SHADOWS
+#endif // SHOW_DEPTH
 					}
 
 #if defined(SHOW_HEATMAP)
 					uint8_t C = marchCount*4;
 #else
 					uint8_t C = uint8_t(final*255.f);
-#endif
+#endif // SHOW_HEATMAP
 
 #if defined(SHOW_WORKER_IDS)
 					p[(ix+iy*tilewidth)*4+0] = (vec->workerID&4) ? 128:C; // B
@@ -691,7 +817,7 @@ static int DispatcherThread(void *data)
 					p[(ix+iy*tilewidth)*4+1] = C; // G
 					p[(ix+iy*tilewidth)*4+2] = C; // R
 					p[(ix+iy*tilewidth)*4+3] = 0xFF;
-#endif
+#endif // SHOW_WORKER_IDS
 				}
 			}
 
@@ -832,7 +958,8 @@ int SDL_main(int _argc, char** _argv)
 	rc.rotAng = 0.f;
 	rc.aspect = float(height) / float(width);
 	rc.nil = SVec128{0.f, 0.f, 0.f, 0.f};
-	rc.epsilon = SVec128{-0.02f, -0.02f, -0.02f, 0.f};
+	rc.negepsilon = SVec128{-0.02f, -0.02f, -0.02f, 0.f};
+	rc.epsilon = SVec128{0.02f, 0.02f, 0.02f, 0.f};
 
 	do{
 		SDL_Event event;
