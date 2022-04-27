@@ -20,13 +20,16 @@
 //#define USE_UNIT_CELL
 
 // Define this to get double-sided hits (i.e. no backface culling against incoming ray)
-#define DOUBLE_SIDED
+//#define DOUBLE_SIDED
 
 // Define to enable reflections
 #define ENABLE_REFLECTIONS
 
+// Define to enable exponential fog (requires DOUBLE_SIDED)
+//#define ENABLE_EXPFOG
+
 // Define to enable shadows
-//#define ENABLE_SHADOWS
+#define ENABLE_SHADOWS
 
 // Define to enable light occlusion or disable for NdotL
 //#define ENABLE_OCCLUSION
@@ -66,8 +69,8 @@ static const uint32_t width = 512;
 static const uint32_t height = 512;
 #else
 // 320x240 but x2
-static const uint32_t tilewidth = 8;
-static const uint32_t tileheight = 16;
+static const uint32_t tilewidth = 4;
+static const uint32_t tileheight = 8;
 static const uint32_t width = 640;
 static const uint32_t height = 480;
 #endif
@@ -693,6 +696,40 @@ static int DispatcherThread(void *data)
 #else
 						SVec128 viewRay = EVecNorm3(traceRay);
 
+#if defined(ENABLE_EXPFOG)
+						final = 0.f;
+						int through = 0;
+						for (uint32_t i=0; i<4; ++i)
+						{
+							// Advance forward
+							SVec128 marchpos = EVecAdd(hitpos, EVecMul(viewRay, vec->rc->epsilon));
+
+							SVec128 exitPos;
+							float t2 = raylength;
+							hitID = 0xFFFFFFFF;
+							float rx = float(rand()%100-50);
+							float ry = float(rand()%100-50);
+							float rz = float(rand()%100-50);
+							SVec128 rray = EVecConst(rx, ry, rz, 0.f);
+							SVec128 randomRay = EVecMul(EVecNorm3(rray), raylenvec);
+							SVec128 invRandomRay = EVecRcp(randomRay);
+							traceBVH8(testBVH8, marchCount, t2, marchpos, hitID, traceRay, invRay, exitPos);
+
+							if (hitID == 0xFFFFFFFF)
+								break;
+
+							if ((through%2)==0)
+							{
+								float L = EVecGetFloatX(EVecLen3(EVecSub(exitPos, hitpos)));
+								float F = EMaximum(0.f, 1.f - expf(-L*0.04f));
+								final += F;
+							}
+							hitpos = exitPos;
+							through++;
+						}
+						final *= 2.f;
+#else
+
 #if defined(ENABLE_OCCLUSION)
 						{
 							SVec128 uvw;
@@ -751,6 +788,7 @@ static int DispatcherThread(void *data)
 						//hitpos = EVecAdd(hitpos, EVecMul(viewRay, vec->rc->negepsilon));
 						hitpos = EVecAdd(EVecMul(nrm, vec->rc->epsilon), hitpos);
 #endif // ENABLE_OCCLUSION
+#endif // ENABLE_EXPFOG
 
 						// Reflections
 #if defined(ENABLE_REFLECTIONS)
@@ -782,7 +820,7 @@ static int DispatcherThread(void *data)
 								float rL = fabs(EVecGetFloatX(EVecDot3(rnrm, EVecNorm3(sunRay))));
 								float diminish = fabs(1.f/(2.f*raylength*tr+0.01f));
 								diminish = EMinimum(1.f, EMaximum(0.f, diminish));
-								final += (final+rL*diminish)*0.5f;
+								final += EMinimum(final, rL*diminish);
 							}
 						}
 #endif // ENABLE_REFLECTIONS
