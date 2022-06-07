@@ -497,16 +497,16 @@ struct SBVH8Database
 	void GenerateBVH8()
 	{
 		uint32_t startOffset = 0, fromLevel = 0;
-		uint32_t lowest_quality_reached = 0;
-		while (!lowest_quality_reached)
+		uint32_t root_node_reached = 0;
+		while (!root_node_reached)
 		{
-			startOffset = GenerateOctreeParentNodes(startOffset, fromLevel, lowest_quality_reached);
+			startOffset = GenerateOctreeParentNodes(startOffset, fromLevel, root_node_reached);
 			++fromLevel;
 		}
 		m_RootBVH8Node = fromLevel;
 	}
 
-	uint32_t GenerateOctreeParentNodes(const uint32_t start_offset, const uint32_t from_level, uint32_t &lowest_quality_reached)
+	uint32_t GenerateOctreeParentNodes(const uint32_t start_offset, const uint32_t from_level, uint32_t &root_node_reached)
 	{
 		uint32_t lod_start_offset = m_dataLookup.size();
 		uint32_t to_level = from_level + 1;
@@ -573,7 +573,7 @@ struct SBVH8Database
 		// Sort to ensure higher keys move to the end
 		SortAscending(lod_start_offset, lod_end_offset-lod_start_offset);
 
-		lowest_quality_reached = (lod_end_offset - lod_start_offset) <= 1;
+		root_node_reached = (lod_end_offset - lod_start_offset) <= 1;
 
 		// Return start offset of generated nodes
 		return lod_start_offset;
