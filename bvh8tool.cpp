@@ -1,12 +1,4 @@
-#if defined(PLATFORM_LINUX)
-#include "platformlinux.h"
-#include "SDL2/SDL.h"
-#else // PLATFORM_WINDOWS
-#include "platformwin.h"
-#include "SDL.h"
-#endif
-
-#include <stdio.h>
+#include "platform.h"
 #include "math.h"
 #include "locklesspipe.h"
 #include "bvh8.h"
@@ -902,7 +894,11 @@ int SDL_main(int _argc, char** _argv)
 #endif
 
 	objl::Loader objloader;
+#if defined(PLATFORM_WINDOWS)
 	if (!objloader.LoadFile(SCENENAME "\\" SCENENAME ".obj"))
+#else
+	if (!objloader.LoadFile(SCENENAME "/" SCENENAME ".obj"))
+#endif
 	{
 		printf("Failed to load OBJ file\n");
 		return 1;
