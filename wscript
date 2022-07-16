@@ -52,6 +52,11 @@ def build(bld):
         linker_flags = []
         libs = ['SDL2']
 
+    sdlpath = os.path.abspath('SDL2\\lib\\x64')
+    bld(features='subst',
+        source=bld.root.find_resource(os.path.join(sdlpath, 'SDL2.dll')),
+        target='SDL2.dll', is_copy=True, before='cxx')
+
     # Build risctool
     bld.program(
         source=glob.glob('*.cpp'),
