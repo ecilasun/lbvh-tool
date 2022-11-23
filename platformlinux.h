@@ -14,8 +14,8 @@
 
 #include <stdint.h>
 
-//#define EInline inline
-#define EInline __attribute__((always_inline))
+#define EInline inline
+//#define EInline __attribute__((always_inline))
 #define EAlign(_x_) __attribute__ ((aligned (_x_)))
 #define EExportLibraryFunction EXTERNC __attribute__ ((visibility("default")))
 

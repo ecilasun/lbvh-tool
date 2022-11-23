@@ -1,17 +1,14 @@
 #pragma once
 
-#if defined(PLATFORM_LINUX)
-#include "platformlinux.h"
-#else
-#include "platformwin.h"
-#endif
+#include "platform.h"
 
 // --------------------------------------------------------------------------------
 // Common defines
 // --------------------------------------------------------------------------------
 
-#define E_PI 3.14159265f
-#define E_PI_HALF E_PI*0.5f
+#define E_PI  3.1415927f
+#define E_TAU 6.2831855f
+#define E_PI_HALF (E_PI*0.5f)
 
 // --------------------------------------------------------------------------------
 // Windows and Linux
@@ -28,8 +25,6 @@
 // --------------------------------------------------------------------------------
 
 #define E_SINGLE_SHUFFLE(vec, mask) _mm_castsi128_ps(_mm_shuffle_epi32(_mm_castps_si128(vec), mask))
-#define EMaximum(_a_, _b_) (_a_) > (_b_) ? (_a_) : (_b_)
-#define EMinimum(_a_, _b_) (_a_) < (_b_) ? (_a_) : (_b_)
 
 // --------------------------------------------------------------------------------
 // Vector
@@ -127,21 +122,22 @@ struct EAlign(16) SBoundingBox
 
 /*EInline int ECountTrailingZeros(const uint32_t value)
 {
-	DWORD out_bit = 0;
+	uint32_t out_bit = 0;
 	if (_BitScanForward(&out_bit, value))
 		return int(out_bit);
 	else
 		return 32;
-}
+	//return int(_tzcnt_u32(value));
+}*/
 
 EInline int ECountLeadingZeros(const uint32_t value)
 {
-	DWORD out_bit = 0;
-	if (_BitScanReverse(&out_bit, value))
-		return 31 - int(out_bit);
-	else
-		return 32;
-}*/
+	#if defined(PLATFORM_WINDOWS)
+		return __lzcnt(value);
+	#else
+		return value ? __builtin_clz(value) : 32;
+	#endif
+}
 
 // --------------------------------------------------------------------------------
 // Load / Store / Splat
@@ -1068,7 +1064,7 @@ EInline SMatrix4x4 EMatLookAtRightHanded(const SVec128 _eye, const SVec128 _at, 
 	mat.r[1] = D1;
 	mat.r[2] = D2;
 	mat.r[3] = g_XMIdentityR3;
-	//mat = EMatTranspose(mat); // DO NOT transpose for non-DX clients
+	mat = EMatTranspose(mat);
 	return mat;
 }
 
@@ -1349,14 +1345,6 @@ EInline void EEvaluateCubicBezierCurve(const SCubicBezierCurve *_b, float _vec[4
 	float _t3 = _t*_t*_t;
 	float _t_t2 = 3.f*_t*t2;
 
-	//SIMD mode. If _t is always calculated, kept and supplied as a 4x4 matrix, it becomes only 3 adds and 4 muls.
-	/*SVec128 ct3 = EVecConst(t3, t3, t3, t3);
-	SVec128 c_t_t2 = EVecConst(_t_t2, _t_t2, _t_t2, _t_t2);
-	SVec128 c_t2_t1 = EVecConst(_t2_t1, _t2_t1, _t2_t1, _t2_t1);
-	SVec128 c_t3 = EVecConst(_t3, _t3, _t3, _t3);
-	SVec128 val = EVecAdd(EVecAdd(EVecMul(ct3,_b->m_p0), EVecMul(c_t_t2, _b->m_p1)), EVecAdd(EVecMul(c_t2_t1, _b->m_p2), EVecMul(c_t3, _b->m_p3)));
-	EVecStore(_vec, val);*/
-
 	_vec[0] = t3*_b->m_A[0] + _t_t2*_b->m_B[0] + _t2_t1*_b->m_C[0] + _t3*_b->m_D[0];
 	_vec[1] = t3*_b->m_A[1] + _t_t2*_b->m_B[1] + _t2_t1*_b->m_C[1] + _t3*_b->m_D[1];
 	_vec[2] = t3*_b->m_A[2] + _t_t2*_b->m_B[2] + _t2_t1*_b->m_C[2] + _t3*_b->m_D[2];
@@ -1541,7 +1529,7 @@ EInline void ECubicBezierCurveMapCanonical2D(const SCubicBezierCurve *_bc, SCubi
 
 	float det = (x3 - x2*f32);
 
-	//EAssert(det != 0.f, "Canonical form of cubic bezier curve: division by zero imminent.");
+	EAssert(det != 0.f, "Canonical form of cubic bezier curve: division by zero imminent.");
 
 	float mappedX = (x4-x2*f42) / det;
 	float mappedY = f42 + (1.f-f32)*mappedX;
@@ -1761,4 +1749,138 @@ EInline void EExpandBounds(SBoundingBox &_bounds, const SVec128 &_newPoint)
 {
 	_bounds.m_Min = EVecMin(_bounds.m_Min, _newPoint);
 	_bounds.m_Max = EVecMax(_bounds.m_Max, _newPoint);
+}
+
+EInline void EJoinBounds(SBoundingBox &_bounds, const SBoundingBox &_A, const SBoundingBox &_B)
+{
+	_bounds.m_Min = EVecMin(_A.m_Min, _B.m_Min);
+	_bounds.m_Max = EVecMax(_A.m_Max, _B.m_Max);
+}
+
+// --------------------------------------------------------------------------------
+// Geometry
+// --------------------------------------------------------------------------------
+
+EInline void CalculateBarycentrics(SVec128 &P, SVec128 &v0, SVec128 &v1, SVec128 &v2, float *uvw)
+{
+	SVec128 e1 = EVecSub(v2, v0);
+	SVec128 e2 = EVecSub(v1, v0);
+	SVec128 e = EVecSub(P, v0);
+	float d00 = EVecGetFloatX(EVecDot3(e1,e1));
+	float d01 = EVecGetFloatX(EVecDot3(e1,e2));
+	float d11 = EVecGetFloatX(EVecDot3(e2,e2));
+	float d20 = EVecGetFloatX(EVecDot3(e,e1));
+	float d21 = EVecGetFloatX(EVecDot3(e,e2));
+
+	float invdenom = 1.f/(d00*d11-d01*d01);
+	uvw[0] = (d11*d20-d01*d21)*invdenom;
+	uvw[1] = (d00*d21-d01*d20)*invdenom;
+	uvw[2] = 1.f - uvw[0] - uvw[1];
+}
+
+EInline bool HitTriangle(SVec128 &v0, SVec128 &v1, SVec128 &v2, SVec128 rayStart, SVec128 rayDir, float &t, float tmax)
+{
+	t = tmax;
+
+	SVec128 e1 = EVecSub(v2, v0);
+	SVec128 e2 = EVecSub(v1, v0);
+	SVec128 s1 = EVecCross3(rayDir, e2);
+	float K = EVecGetFloatX(EVecDot3(s1, e1));
+	if (K >= 0.f)
+		return false; // Ignore backfacing
+
+	float invd = 1.f/K;
+	SVec128 d = EVecSub(rayStart, v0);
+	float b1 = EVecGetFloatX(EVecDot3(d, s1)) * invd;
+	SVec128 s2 = EVecCross3(d, e1);
+	float b2 = EVecGetFloatX(EVecDot3(rayDir, s2)) * invd;
+	float temp = EVecGetFloatX(EVecDot3(e2, s2)) * invd;
+
+	if (b1<0.f || b1>1.f || b2<0.f || b1+b2>1.f || temp<0.f || temp>tmax)
+		return false;
+
+	t = temp;
+	return true;
+}
+
+EInline bool IntersectSlab(SVec128 p0, SVec128 p1, SVec128 rayOrigin, SVec128 rayDir, SVec128 invRayDir, float &enter)
+{
+	SVec128 t0 = EVecMul(EVecSub(p0,rayOrigin), invRayDir);
+	SVec128 t1 = EVecMul(EVecSub(p1,rayOrigin), invRayDir);
+	SVec128 tmin = EVecMin(t0, t1);
+	SVec128 tmax = EVecMax(t0, t1);
+	enter = EMaximum(0.f, EVecMaxComponent3(tmin));
+	float exit = EMinimum(1.f, EVecMinComponent3(tmax));
+	return enter <= exit;
+}
+
+// Intersect ray with AABB, return true and entry point if hit
+EInline bool IntersectSlab(SVec128 p0, SVec128 p1, SVec128 rayOrigin, SVec128 rayDir, SVec128 invRayDir, SVec128& entryPos, SVec128& exitPos)
+{
+	SVec128 t0 = EVecMul(EVecSub(p0,rayOrigin), invRayDir);
+	SVec128 t1 = EVecMul(EVecSub(p1,rayOrigin), invRayDir);
+	SVec128 tmin = EVecMin(t0, t1);
+	SVec128 tmax = EVecMax(t0, t1);
+	float maxcompt = EVecMaxComponent3(tmin);
+	float mincompt = EVecMinComponent3(tmax);
+	float enter = EMaximum(0.f, maxcompt);
+	float exit = EMinimum(1.f, mincompt);
+	entryPos = EVecAdd(rayOrigin, EVecMul(rayDir,EVecConst(enter,enter,enter,1.f)));
+	exitPos = EVecAdd(rayOrigin, EVecMul(rayDir,EVecConst(exit,exit,exit,1.f)));
+	return enter <= exit && maxcompt>0.f && mincompt<1.f;
+}
+
+// --------------------------------------------------------------------------------------------------------------------------
+// Spatial encoding helpers
+// --------------------------------------------------------------------------------------------------------------------------
+
+EInline uint32_t EMortonEncode(uint32_t _x, uint32_t _y, uint32_t _z)
+{
+	// Pack 3 10-bit indices into a 30-bit Morton code
+	// Logic below is HLSL compatible
+	_x &= 0x000003ff;	_y &= 0x000003ff;	_z &= 0x000003ff;
+	_x |= (_x << 16);	_y |= (_y << 16);	_z |= (_z << 16);
+	_x &= 0xff0000ff;	_y &= 0xff0000ff;	_z &= 0xff0000ff;
+	_x |= (_x << 8);	_y |= (_y << 8);	_z |= (_z << 8);
+	_x &= 0x0300f00f;	_y &= 0x0300f00f;	_z &= 0x0300f00f;
+	_x |= (_x << 4);	_y |= (_y << 4);	_z |= (_z << 4);
+	_x &= 0x030c30c3;	_y &= 0x030c30c3;	_z &= 0x030c30c3;
+	_x |= (_x << 2);	_y |= (_y << 2);	_z |= (_z << 2);
+	_x &= 0x09249249;	_y &= 0x09249249;	_z &= 0x09249249;
+	return (_x) | (_y << 1) | (_z << 2);
+}
+
+EInline void EMortonDecode(const uint32_t _morton, uint32_t& _x, uint32_t& _y, uint32_t& _z)
+{
+	// Unpack 3 10-bit indices from a 30-bit Morton code
+	// Logic below is HLSL compatible
+	uint32_t x = (_morton);
+	uint32_t y = (_morton >> 1);
+	uint32_t z = (_morton >> 2);
+	x &= 0x09249249;	y &= 0x09249249;	z &= 0x09249249;
+	x |= (x >> 2);		y |= (y >> 2);		z |= (z >> 2);
+	x &= 0x030c30c3;	y &= 0x030c30c3;	z &= 0x030c30c3;
+	x |= (x >> 4);		y |= (y >> 4);		z |= (z >> 4);
+	x &= 0x0300f00f;	y &= 0x0300f00f;	z &= 0x0300f00f;
+	x |= (x >> 8);		y |= (y >> 8);		z |= (z >> 8);
+	x &= 0xff0000ff;	y &= 0xff0000ff;	z &= 0xff0000ff;
+	x |= (x >> 16);		y |= (y >> 16);		z |= (z >> 16);
+	x &= 0x000003ff;	y &= 0x000003ff;	z &= 0x000003ff;
+	_x = x;
+	_y = y;
+	_z = z;
+}
+
+EInline void EQuantizePosition(const SVec128 &_worldpos, uint32_t _qXYZ[3], SVec128 _gridAABBMin, SVec128 _gridCellSize)
+{
+	SVec128 gridLocalPosition = EVecDiv(EVecSub(_worldpos, _gridAABBMin), _gridCellSize);
+
+	// Clamp within 0-SSDGridEntryCountPerAxis-1 range (inclusive)
+	static const SVec128 cellClampMax{ 1023.f, 1023.f, 1023.f, 0.f};
+	static const SVec128 cellClampMin{ 0.f, 0.f, 0.f, 0.f };
+	gridLocalPosition = EVecMin(EVecMax(gridLocalPosition, cellClampMin), cellClampMax);
+
+	_qXYZ[0] = uint32_t(EFloor(EVecGetFloatX(gridLocalPosition)));
+	_qXYZ[1] = uint32_t(EFloor(EVecGetFloatY(gridLocalPosition)));
+	_qXYZ[2] = uint32_t(EFloor(EVecGetFloatZ(gridLocalPosition)));
 }

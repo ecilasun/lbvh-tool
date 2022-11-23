@@ -6,7 +6,7 @@ from waflib.Task import Task
 from waflib import Build
 
 VERSION = '0.0'
-APPNAME = 'bvh8tool'
+APPNAME = 'lbvhtool'
 
 top = '.'
 
@@ -37,7 +37,7 @@ def build(bld):
         includes = ['source', 'includes', 'SDL2/include', win_sdk_include_path, win_sdk_include_path_shared]
         sdk_lib_path = [win_sdk_lib_path, os.path.abspath('SDL2\\lib\\x64')]
         #RELEASE
-        compile_flags = ['/permissive-', '/arch:AVX', '/GL', '/WX', '/Ox', '/Ot', '/Oy', '/fp:fast', '/Qfast_transcendentals', '/Zi', '/EHsc', '/FS', '/D_SECURE_SCL 0', '/Fdbvh8tool']
+        compile_flags = ['/permissive-', '/arch:AVX', '/GL', '/WX', '/Ox', '/Ot', '/Oy', '/fp:fast', '/Qfast_transcendentals', '/Zi', '/EHsc', '/FS', '/D_SECURE_SCL 0', '/Fdlbvhtool']
         linker_flags = ['/SUBSYSTEM:CONSOLE', '/LTCG', '/RELEASE']
         #DEBUG
         #compile_flags = ['/permissive-', '/arch:AVX', '/WX', '/Od', '/DDEBUG', '/Qfast_transcendentals', '/Zi', '/GS', '/EHsc', '/FS']
@@ -51,8 +51,8 @@ def build(bld):
         platform_defines = ['PLATFORM_LINUX', '_CRT_SECURE_NO_WARNINGS']
         includes = ['source', 'includes', '/usr/include/SDL2']
         sdk_lib_path = []
-        compile_flags = ['-Ofast', '-ffast-math', '-std=c++17', '-msse4.1']
-        #compile_flags = ['-O0', '-ffast-math', '-std=c++17', '-g', '-msse4.1'] # -ggdb
+        compile_flags = ['-Ofast', '-ffast-math', '-lclang', '-std=c++17', '-msse4.1']
+        #compile_flags = ['-O0', '-ffast-math', '-lclang', '-std=c++17', '-g', '-msse4.1'] # -ggdb
         linker_flags = []
         libs = ['SDL2']
 
@@ -61,7 +61,7 @@ def build(bld):
         source=glob.glob('*.cpp'),
         cxxflags=compile_flags,
         ldflags=linker_flags,
-        target='bvh8tool',
+        target='lbvhtool',
         defines=platform_defines,
         includes=includes,
         libpath=sdk_lib_path,
