@@ -1,7 +1,8 @@
 # BVH Tool
 
-A tool that will process input geometry and produce a BVH structure using LBVH code.
-
+A tool that will process input geometry and produce a BVH structure using LBVH method.
+You can read more on this subject here:
+https://research.nvidia.com/publication/2012-06_maximizing-parallelism-construction-bvhs-octrees-and-k-d-trees
 
 ## Summary
 
@@ -42,9 +43,9 @@ If everything went well, you should see something similar to the following in th
 - Cube  | vertices > 519        | texcoords > 574       | normals > 1121        | triangles > 0 | material: None
 - Text  | vertices > 1135       | texcoords > 1190      | normals > 1132        | triangles > 0 | material: None
 - Cone  | vertices > 1168       | texcoords > 1255      | normals > 1165        | triangles > 0 | material: None
-Using automatic cell size: 0.244319
+LBVH data generated. Leaf node count:1653
 ```
 
-After a short while (on first run) the following rotating scene should be displayed in a window:
+After a short while (on first run) the following scene should be displayed in a window.
 
 ![Sample Output](images/output.png)

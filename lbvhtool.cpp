@@ -265,14 +265,14 @@ static int DispatcherThread(void *data)
 					SVec128 raylenvec{t,t,t,0.f};
 					SVec128 pxVec{px,px,px,0.f};
 					SVec128 L = EVecMul(vec->rc->lookMat.r[0], pxVec);
-					SVec128 traceRay = EVecMul(EVecAdd(EVecAdd(L, U), vec->rc->F), raylenvec);
-					SVec128 invRay = EVecRcp(traceRay);
+					SVec128 rayDir = EVecMul(EVecAdd(EVecAdd(L, U), vec->rc->F), raylenvec);
+					SVec128 rayEnd = EVecAdd(vec->rc->rayOrigin, rayDir);
 
 					uint32_t hitNode = 0xFFFFFFFF;
-					SVec128 hitpos = EVecAdd(vec->rc->rayOrigin, traceRay);
+					SVec128 hitpos;
 					uint32_t marchCount = 0;
 
-					FindClosestHitLBVH(testLBVH, lbvhLeafCount, vec->rc->rayOrigin, traceRay, t, hitpos, hitNode, ClosestHitLBVH);
+					FindClosestHitLBVH(testLBVH, lbvhLeafCount, vec->rc->rayOrigin, rayEnd, t, hitpos, hitNode, ClosestHitLBVH);
 
 					float final = 0.f;
 
@@ -286,7 +286,7 @@ static int DispatcherThread(void *data)
 						SVec128 invSunRay = EVecRcp(sunRay);
 						SVec128 nrm;
 
-						SVec128 viewRay = EVecNorm3(traceRay);
+						SVec128 viewRay = EVecNorm3(rayDir);
 
 						// Global + NdotL
 						{
@@ -465,7 +465,7 @@ int SDL_main(int _argc, char** _argv)
 		thrd[i] = SDL_CreateThread(DispatcherThread, "DispatcherThread", (void*)&wc[i]);
 	}
 
-	rc.rotAng = 0.f;
+	rc.rotAng = 3.141592f;
 	rc.aspect = float(height) / float(width);
 	rc.nil = SVec128{0.f, 0.f, 0.f, 0.f};
 	rc.negepsilon = SVec128{-0.02f, -0.02f, -0.02f, 0.f};
@@ -520,7 +520,7 @@ int SDL_main(int _argc, char** _argv)
 		} while (!distributedAll); // We're done handing out jobs
 
 		// Rotate
-		rc.rotAng += 0.01f;
+		//rc.rotAng += 0.05f;
 
 		// Wait for all threads to be done with locked image pointer before updating window image
 		/*int tdone;
