@@ -43,6 +43,10 @@ def build(bld):
         #compile_flags = ['/permissive-', '/arch:AVX', '/WX', '/Od', '/DDEBUG', '/Qfast_transcendentals', '/Zi', '/GS', '/EHsc', '/FS']
         #linker_flags = ['/SUBSYSTEM:CONSOLE', '/LTCG', '/DEBUG']
         libs = ['ws2_32', 'shell32', 'user32', 'Comdlg32', 'gdi32', 'ole32', 'kernel32', 'winmm', 'SDL2main', 'SDL2']
+        sdlpath = os.path.abspath('SDL2\\lib\\x64')
+        bld(features='subst',
+            source = sdlsource,
+            target='SDL2.dll', is_copy=True, before='cxx')
     else:
         platform_defines = ['PLATFORM_LINUX', '_CRT_SECURE_NO_WARNINGS']
         includes = ['source', 'includes', '/usr/include/SDL2']
@@ -51,11 +55,6 @@ def build(bld):
         #compile_flags = ['-O0', '-ffast-math', '-std=c++17', '-g', '-msse4.1'] # -ggdb
         linker_flags = []
         libs = ['SDL2']
-
-    sdlpath = os.path.abspath('SDL2\\lib\\x64')
-    bld(features='subst',
-        source=bld.root.find_resource(os.path.join(sdlpath, 'SDL2.dll')),
-        target='SDL2.dll', is_copy=True, before='cxx')
 
     # Build risctool
     bld.program(
