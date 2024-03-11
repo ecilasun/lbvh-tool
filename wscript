@@ -37,7 +37,7 @@ def build(bld):
 
         platform_defines = ['PLATFORM_WINDOWS', '_CRT_SECURE_NO_WARNINGS']
         includes = ['source', 'includes', 'SDL2/include', win_sdk_include_path, win_sdk_include_path_shared]
-        sdk_lib_path = [win_sdk_lib_path, os.path.abspath('SDL2\\lib\\x64')]
+        sdk_lib_path = [win_sdk_lib_path, os.path.abspath('SDL2/lib/x64')]
         #RELEASE
         compile_flags = ['/permissive-', '/arch:AVX', '/GL', '/WX', '/Ox', '/Ot', '/Oy', '/fp:fast', '/Qfast_transcendentals', '/Zi', '/EHsc', '/FS', '/D_SECURE_SCL 0', '/Fdlbvhtool']
         linker_flags = ['/SUBSYSTEM:CONSOLE', '/LTCG', '/RELEASE']
@@ -45,9 +45,9 @@ def build(bld):
         #compile_flags = ['/permissive-', '/arch:AVX', '/WX', '/Od', '/DDEBUG', '/Qfast_transcendentals', '/Zi', '/GS', '/EHsc', '/FS']
         #linker_flags = ['/SUBSYSTEM:CONSOLE', '/LTCG', '/DEBUG']
         libs = ['ws2_32', 'shell32', 'user32', 'Comdlg32', 'gdi32', 'ole32', 'kernel32', 'winmm', 'SDL2main', 'SDL2']
-        sdlpath = os.path.abspath('SDL2\\lib\\x64\\SDL2.dll')
+        sdlpath = os.path.abspath('SDL2/lib/x64/SDL2.dll')
         bld(features='subst',
-            source = sdlpath,
+            source = [sdlpath],
             target='SDL2.dll', is_copy=True, before='cxx')
     else:
         platform_defines = ['PLATFORM_LINUX', '_CRT_SECURE_NO_WARNINGS']
