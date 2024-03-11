@@ -20,7 +20,6 @@ def configure(conf):
         conf.env.MSVC_TARGETS = ['x64']
         conf.load('msvc')
         conf.env.PLATFORM = ['windows']
-        copyfile('wscript', 'wscript_copy')
     else:
         conf.load('clang++')
 
@@ -45,10 +44,9 @@ def build(bld):
         #compile_flags = ['/permissive-', '/arch:AVX', '/WX', '/Od', '/DDEBUG', '/Qfast_transcendentals', '/Zi', '/GS', '/EHsc', '/FS']
         #linker_flags = ['/SUBSYSTEM:CONSOLE', '/LTCG', '/DEBUG']
         libs = ['ws2_32', 'shell32', 'user32', 'Comdlg32', 'gdi32', 'ole32', 'kernel32', 'winmm', 'SDL2main', 'SDL2']
-        sdlpath = os.path.abspath('SDL2/lib/x64/SDL2.dll')
-        bld(features='subst',
-            source = [sdlpath],
-            target='SDL2.dll', is_copy=True, before='cxx')
+        sdlsourcepath = os.path.abspath('SDL2/lib/x64/SDL2.dll')
+        sdltargetpath = os.path.abspath('./build/release/SDL2.dll')
+        copyfile(sdlsourcepath, sdltargetpath)
     else:
         platform_defines = ['PLATFORM_LINUX', '_CRT_SECURE_NO_WARNINGS']
         includes = ['source', 'includes', '/usr/include/SDL2']
