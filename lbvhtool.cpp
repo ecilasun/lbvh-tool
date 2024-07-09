@@ -33,10 +33,10 @@ static const uint32_t width = 512;
 static const uint32_t height = 512;
 #else
 // 320x240 but x2
-static const uint32_t tilewidth = 4;
+static const uint32_t tilewidth = 8;
 static const uint32_t tileheight = 8;
-static const uint32_t width = 640;
-static const uint32_t height = 480;
+static const uint32_t width = 512;
+static const uint32_t height = 512;
 #endif
 static const uint32_t tilecountx = width/tilewidth;
 static const uint32_t tilecounty = height/tileheight;
@@ -66,7 +66,7 @@ struct SWorkerContext
 	uint32_t heat{0};
 	uint8_t rasterTile[4*tilewidth*tileheight]; // Internal rasterization tile (in hardware, to avoid arbitration need)
 	SRenderContext *rc;
-	CLocklessPipe<10> dispatchvector; // 1024 byte queue per worker
+	CLocklessPipe<12> dispatchvector;
 };
 
 // NOTE: This structure is very expensive for E32E, a data reduction method has to be applied here.
@@ -474,7 +474,7 @@ int SDL_main(int _argc, char** _argv)
 			// Distribute all tiles across all work queues
 			for (uint32_t i=0; i<MAX_WORKERS; ++i)
 			{
-				if (wc[i].dispatchvector.FreeSpace()!=0) // We have space in this worker's queue
+				if (wc[i].dispatchvector.FreeSpace() != 0) // We have space in this worker's queue
 				{
 #if defined(USE_MORTON_ORDER)
 					uint32_t x, y;
@@ -500,13 +500,13 @@ int SDL_main(int _argc, char** _argv)
 		rc.rotAng += 0.01f;
 
 		// Wait for all threads to be done with locked image pointer before updating window image
-		/*int tdone;
+		int tdone;
 		do
 		{
 			tdone = 0;
 			for (uint32_t i=0; i<MAX_WORKERS; ++i)
 				tdone += wc[i].dispatchvector.BytesAvailable() ? 0 : 1;
-		} while(tdone != MAX_WORKERS);*/
+		} while(tdone != MAX_WORKERS);
 
 		// TODO: Copy tiles to their respective positions
 		//(uint8_t*)surface->pixels;
