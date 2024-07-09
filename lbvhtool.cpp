@@ -47,7 +47,7 @@
 //#define SHOW_DEPTH
 
 // Number of worker threads
-#define MAX_WORKERS 12
+#define MAX_WORKERS 8
 
 // Define to use Morton curve order instead of scanline-first
 //#define USE_MORTON_ORDER
@@ -483,7 +483,7 @@ int SDL_main(int _argc, char** _argv)
 			SDL_LockSurface(surface);
 
 		// Set up camera data
-		rc.rayOrigin = SVec128{sinf(rc.rotAng)*cameradistance, (1.f+sinf(rc.rotAng*0.5f))*cameradistance*0.5f, cosf(rc.rotAng)*cameradistance, 1.f};
+		rc.rayOrigin = SVec128{sinf(rc.rotAng)*cameradistance, 0.f, cosf(rc.rotAng)*cameradistance, 1.f};
 		rc.lookAt = SVec128{0.f,0.f,0.f,1.f};
 		rc.upVec = SVec128{0.f,1.f,0.f,0.f};
 		rc.lookMat = EMatLookAtRightHanded(rc.rayOrigin, rc.lookAt, rc.upVec);
@@ -520,7 +520,7 @@ int SDL_main(int _argc, char** _argv)
 		} while (!distributedAll); // We're done handing out jobs
 
 		// Rotate
-		//rc.rotAng += 0.05f;
+		rc.rotAng += 0.001f;
 
 		// Wait for all threads to be done with locked image pointer before updating window image
 		/*int tdone;
