@@ -22,18 +22,18 @@
 // Number of worker threads
 #define MAX_WORKERS 12
 
-// Define to use Morton curve order instead of scanline-first
+// Define to use Morton curve order instead of scanline order
 //#define USE_MORTON_ORDER
 
 static bool g_done = false;
 #if defined(USE_MORTON_ORDER)
 static const uint32_t tilewidth = 4;
-static const uint32_t tileheight = 4;
+static const uint32_t tileheight = 8;
 static const uint32_t width = 512;
 static const uint32_t height = 512;
 #else
 // 320x240 but x2
-static const uint32_t tilewidth = 8;
+static const uint32_t tilewidth = 4;
 static const uint32_t tileheight = 8;
 static const uint32_t width = 512;
 static const uint32_t height = 512;
