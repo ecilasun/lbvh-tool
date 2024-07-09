@@ -223,7 +223,7 @@ void GenerateLBVH(SRadixTreeNode *_nodes, std::vector<SRadixTreeNode> &_leafNode
 	ComputeAABBs(_nodes, rootNode, _numNodes);
 }
 
-void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, HitTestFunc _hitTestFunc)
+void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, uint32_t &_heat, HitTestFunc _hitTestFunc)
 {
 	SVec128 rayDelta = EVecSetW(EVecSub(_rayEnd, _rayStart), 1.f);
 	SVec128 rayDir = EVecNorm3(rayDelta);
@@ -250,7 +250,7 @@ void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec1
 
 				float t;
 				// Hit only if we're going through the triangle and are closer than before
-				bool triHit = _hitTestFunc(self, _rayStart, rayDir, t, closestHit);
+				bool triHit = _hitTestFunc(self, _rayStart, rayDir, t, closestHit, _heat);
 				if (triHit)
 				{
 					// Remember this hit, and resume
@@ -271,7 +271,7 @@ void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec1
 	}
 }
 
-void FindAnyHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, HitTestFunc _hitTestFunc)
+void FindAnyHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, uint32_t& _heat, HitTestFunc _hitTestFunc)
 {
 	SVec128 rayDelta = EVecSetW(EVecSub(_rayEnd, _rayStart), 1.f);
 	SVec128 rayDir = EVecNorm3(rayDelta);
@@ -298,7 +298,7 @@ void FindAnyHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &
 
 				float t;
 				// Hit only if we're going through the triangle and are closer than before
-				bool triHit = _hitTestFunc(self, _rayStart, rayDir, t, closestHit);
+				bool triHit = _hitTestFunc(self, _rayStart, rayDir, t, closestHit, _heat);
 				if (triHit)
 				{
 					// Remember this hit, and resume

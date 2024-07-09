@@ -13,8 +13,11 @@
 // Depth of traversal stack
 #define MAX_STACK_ENTRIES 16
 
+// Define to see traversal count per tile
+//#define SHOW_HEATMAP
+
 // Define this to get worker tile debug view
-#define SHOW_WORKER_IDS
+//#define SHOW_WORKER_IDS
 
 // Number of worker threads
 #define MAX_WORKERS 12
@@ -60,6 +63,7 @@ struct SRenderContext
 struct SWorkerContext
 {
 	uint32_t workerID{0};
+	uint32_t heat{0};
 	uint8_t rasterTile[4*tilewidth*tileheight]; // Internal rasterization tile (in hardware, to avoid arbitration need)
 	SRenderContext *rc;
 	CLocklessPipe<10> dispatchvector; // 1024 byte queue per worker
@@ -190,18 +194,22 @@ void bvhBuilder(triangle* _triangles, uint32_t _numTriangles, std::vector<SRadix
 	printf("LBVH data generated. Leaf node count:%d\n", lbvhLeafCount);
 }
 
-bool ClosestHitLBVH(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayDir, float &_t, const float _tmax)
+bool ClosestHitLBVH(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayDir, float &_t, const float _tmax, uint32_t &_heat)
 {
 	uint32_t tri = _self.m_primitiveIndex;
 	if (tri == 0xFFFFFFFF)
 		return false;
-
-	return HitTriangle (
+	
+	bool isHit = HitTriangle (
 		sceneGeometry[tri].coords[0],
 		sceneGeometry[tri].coords[1],
 		sceneGeometry[tri].coords[2],
 		_rayStart, _rayDir,
 		_t, _tmax );
+
+	_heat += isHit ? 1:0;
+
+	return isHit;
 }
 
 static int DispatcherThread(void *data)
@@ -241,7 +249,8 @@ static int DispatcherThread(void *data)
 					uint32_t hitNode = 0xFFFFFFFF;
 					SVec128 hitpos;
 
-					FindClosestHitLBVH(testLBVH, lbvhLeafCount, vec->rc->rayOrigin, rayEnd, t, hitpos, hitNode, ClosestHitLBVH);
+					vec->heat = 0;
+					FindClosestHitLBVH(testLBVH, lbvhLeafCount, vec->rc->rayOrigin, rayEnd, t, hitpos, hitNode, vec->heat, ClosestHitLBVH);
 
 					float final = 0.f;
 
@@ -278,7 +287,6 @@ static int DispatcherThread(void *data)
 					}
 
 					uint8_t C = uint8_t(final*255.f);
-
 #if defined(SHOW_WORKER_IDS)
 					p[(ix+iy*tilewidth)*4+0] = (vec->workerID&4) ? 128:C; // B
 					p[(ix+iy*tilewidth)*4+1] = (vec->workerID&2) ? 128:C; // G
@@ -290,6 +298,10 @@ static int DispatcherThread(void *data)
 					p[(ix+iy*tilewidth)*4+2] = C; // R
 					p[(ix+iy*tilewidth)*4+3] = 0xFF;
 #endif // SHOW_WORKER_IDS
+
+#if defined(SHOW_HEATMAP)
+					p[(ix+iy*tilewidth)*4+2] = (vec->heat*64)%255; // R
+#endif
 				}
 			}
 
