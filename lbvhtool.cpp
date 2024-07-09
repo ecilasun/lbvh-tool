@@ -7,47 +7,17 @@
 //#define SCENENAME "sibenik"
 #define SCENENAME "testscene"
 
-// Define to use 1.f as cell size
-//#define USE_UNIT_CELL
-
-// Define this to get double-sided hits (i.e. no backface culling against incoming ray)
-//#define DOUBLE_SIDED
-
-// Define to enable reflections
-#define ENABLE_REFLECTIONS
-
-// Define to enable exponential fog (requires DOUBLE_SIDED)
-//#define ENABLE_EXPFOG
-
-// Define to enable shadows
-#define ENABLE_SHADOWS
-
-// Define to enable light occlusion or disable for NdotL
-//#define ENABLE_OCCLUSION
-
 // NOTE: Once there's a correct cell vs triangle test, this will be reduced
 #define MAX_NODE_TRIS 64
 
 // Depth of traversal stack
 #define MAX_STACK_ENTRIES 16
 
-// Define this to ignore triangles and work with BVH child nodes only, and see in x-ray vision
-//#define IGNORE_CHILD_DATA
-
-// Define to ignore hits and keep marching - use this together with SHOw_HEATMAP
-//#define XRAY_MODE
-
-// Define to see traversal count per tile
-//#define SHOW_HEATMAP
-
 // Define this to get worker tile debug view
-//#define SHOW_WORKER_IDS
-
-// Define this to show depth information only (no barycentrics/lighting etc)
-//#define SHOW_DEPTH
+#define SHOW_WORKER_IDS
 
 // Number of worker threads
-#define MAX_WORKERS 8
+#define MAX_WORKERS 12
 
 // Define to use Morton curve order instead of scanline-first
 //#define USE_MORTON_ORDER
@@ -68,7 +38,7 @@ static const uint32_t height = 480;
 static const uint32_t tilecountx = width/tilewidth;
 static const uint32_t tilecounty = height/tileheight;
 static const float cameradistance = 20.f;
-static const float raylength = cameradistance + 100.f;
+static const float raylength = cameradistance + 1000.f;
 
 struct SRenderContext
 {
@@ -270,7 +240,6 @@ static int DispatcherThread(void *data)
 
 					uint32_t hitNode = 0xFFFFFFFF;
 					SVec128 hitpos;
-					uint32_t marchCount = 0;
 
 					FindClosestHitLBVH(testLBVH, lbvhLeafCount, vec->rc->rayOrigin, rayEnd, t, hitpos, hitNode, ClosestHitLBVH);
 
@@ -308,11 +277,7 @@ static int DispatcherThread(void *data)
 						}
 					}
 
-#if defined(SHOW_HEATMAP)
-					uint8_t C = marchCount*4;
-#else
 					uint8_t C = uint8_t(final*255.f);
-#endif // SHOW_HEATMAP
 
 #if defined(SHOW_WORKER_IDS)
 					p[(ix+iy*tilewidth)*4+0] = (vec->workerID&4) ? 128:C; // B
@@ -483,7 +448,7 @@ int SDL_main(int _argc, char** _argv)
 			SDL_LockSurface(surface);
 
 		// Set up camera data
-		rc.rayOrigin = SVec128{sinf(rc.rotAng)*cameradistance, 0.f, cosf(rc.rotAng)*cameradistance, 1.f};
+		rc.rayOrigin = SVec128{sinf(rc.rotAng)*cameradistance, sinf(rc.rotAng*0.1f)*12.f, cosf(rc.rotAng)*cameradistance, 1.f};
 		rc.lookAt = SVec128{0.f,0.f,0.f,1.f};
 		rc.upVec = SVec128{0.f,1.f,0.f,0.f};
 		rc.lookMat = EMatLookAtRightHanded(rc.rayOrigin, rc.lookAt, rc.upVec);
@@ -520,7 +485,7 @@ int SDL_main(int _argc, char** _argv)
 		} while (!distributedAll); // We're done handing out jobs
 
 		// Rotate
-		rc.rotAng += 0.001f;
+		rc.rotAng += 0.01f;
 
 		// Wait for all threads to be done with locked image pointer before updating window image
 		/*int tdone;
