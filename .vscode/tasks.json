@@ -6,7 +6,7 @@
         {
             "label": "configure",
             "type": "shell",
-            "command": "python waf --out='build/release' configure",
+            "command": "python waf --out=build/release configure",
             "group": {
                 "kind": "build",
                 "isDefault": true

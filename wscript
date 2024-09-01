@@ -44,8 +44,9 @@ def build(bld):
         #compile_flags = ['/permissive-', '/arch:AVX', '/WX', '/Od', '/DDEBUG', '/Qfast_transcendentals', '/Zi', '/GS', '/EHsc', '/FS']
         #linker_flags = ['/SUBSYSTEM:CONSOLE', '/LTCG', '/DEBUG']
         libs = ['ws2_32', 'shell32', 'user32', 'Comdlg32', 'gdi32', 'ole32', 'kernel32', 'winmm', 'SDL2main', 'SDL2']
-        sdlsourcepath = os.path.abspath('SDL2/lib/x64/SDL2.dll')
+        sdlsourcepath = os.path.abspath('./SDL2/lib/x64/SDL2.dll')
         sdltargetpath = os.path.abspath('./build/release/SDL2.dll')
+        print (sdlsourcepath + " -> " + sdltargetpath)
         copyfile(sdlsourcepath, sdltargetpath)
     else:
         platform_defines = ['PLATFORM_LINUX', '_CRT_SECURE_NO_WARNINGS']
