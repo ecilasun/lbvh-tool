@@ -246,67 +246,16 @@ void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec1
 		{
 			if (self.m_left==0xFFFFFFFF /*&& self.m_right==0xFFFFFFFF*/) // Leaf node
 			{
-				//SVec128 intersection = EVecAdd(_rayStart, EVecMul(rayDelta, EVecConst(enter,enter,enter,0.f)));
-
 				float t;
 				// Hit only if we're going through the triangle and are closer than before
-				bool triHit = _hitTestFunc(self, _rayStart, rayDir, t, closestHit, _heat);
+				bool triHit = _hitTestFunc(self, _rayStart, _rayEnd, rayDir, t, closestHit, _heat);
 				if (triHit)
 				{
 					// Remember this hit, and resume
-					_hitPos = EVecAdd(_rayStart, EVecMul(rayDir, EVecConst(t,t,t,0.f)));
+					_hitPos = EVecAdd(_rayStart, EVecMul(rayDelta, EVecConst(t,t,t,0.f)));
 					_hitNode = currentNodeIndex;
 					closestHit = t;
 					_t = t;
-					//return; // Nearest hit
-				}
-			}
-			else
-			{
-				// Wasn't a leaf node, dive deeper
-				if (self.m_left != 0xFFFFFFFF) stack[SP++] = self.m_left;
-				if (self.m_right != 0xFFFFFFFF) stack[SP++] = self.m_right;
-			}
-		}
-	}
-}
-
-void FindAnyHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, uint32_t& _heat, HitTestFunc _hitTestFunc)
-{
-	SVec128 rayDelta = EVecSetW(EVecSub(_rayEnd, _rayStart), 1.f);
-	SVec128 rayDir = EVecNorm3(rayDelta);
-	SVec128 invDelta = EVecRcp(rayDelta);
-	_hitNode = 0xFFFFFFFF;
-	float closestHit = FLT_MAX;
-
-	int SP = 0;
-	int stack[64];
-	stack[SP++] = 0; // Start from root node
-
-	while (SP > 0 && SP < 64) // While no underflow or overflow
-	{
-		int currentNodeIndex = stack[--SP];
-		SRadixTreeNode &self = _nodes[currentNodeIndex];
-
-		float enter = 0.f;
-		bool hit = IntersectSlab(self.m_bounds.m_Min, self.m_bounds.m_Max, _rayStart, rayDelta, invDelta, enter);
-		if (hit)
-		{
-			if (self.m_left==0xFFFFFFFF /*&& self.m_right==0xFFFFFFFF*/) // Leaf node
-			{
-				SVec128 intersection = EVecAdd(_rayStart, EVecMul(rayDelta, EVecConst(enter,enter,enter,0.f)));
-
-				float t;
-				// Hit only if we're going through the triangle and are closer than before
-				bool triHit = _hitTestFunc(self, _rayStart, rayDir, t, closestHit, _heat);
-				if (triHit)
-				{
-					// Remember this hit, and resume
-					_hitPos = intersection;
-					_hitNode = currentNodeIndex;
-					closestHit = t;
-					_t = t;
-					return; // Anyhit
 				}
 			}
 			else

@@ -194,7 +194,7 @@ void bvhBuilder(triangle* _triangles, uint32_t _numTriangles, std::vector<SRadix
 	printf("LBVH data generated. Leaf node count:%d\n", lbvhLeafCount);
 }
 
-bool ClosestHitLBVH(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayDir, float &_t, const float _tmax, uint32_t &_heat)
+bool ClosestHitLBVH(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, const SVec128 &_rayDir, float &_t, const float _tmax, uint32_t &_heat)
 {
 	uint32_t tri = _self.m_primitiveIndex;
 	if (tri == 0xFFFFFFFF)
@@ -204,7 +204,7 @@ bool ClosestHitLBVH(const SRadixTreeNode &_self, const SVec128 &_rayStart, const
 		sceneGeometry[tri].coords[0],
 		sceneGeometry[tri].coords[1],
 		sceneGeometry[tri].coords[2],
-		_rayStart, _rayDir,
+		_rayStart, EVecSub(_rayEnd, _rayStart),
 		_t, _tmax );
 
 	_heat += isHit ? 1:0;
@@ -236,11 +236,11 @@ static int DispatcherThread(void *data)
 				{
 					float px = (float(ix+ox) - float(width)/2.f)/float(width);
 
-					float t = raylength;
+					float tHit = FLT_MAX;
 
 					SVec128 pyVec{py,py,py,0.f};
 					SVec128 U = EVecMul(vec->rc->lookMat.r[1], pyVec);
-					SVec128 raylenvec{t,t,t,0.f};
+					SVec128 raylenvec{raylength,raylength,raylength,0.f};
 					SVec128 pxVec{px,px,px,0.f};
 					SVec128 L = EVecMul(vec->rc->lookMat.r[0], pxVec);
 					SVec128 rayDir = EVecMul(EVecAdd(EVecAdd(L, U), vec->rc->F), raylenvec);
@@ -250,7 +250,7 @@ static int DispatcherThread(void *data)
 					SVec128 hitpos;
 
 					vec->heat = 0;
-					FindClosestHitLBVH(testLBVH, lbvhLeafCount, vec->rc->rayOrigin, rayEnd, t, hitpos, hitNode, vec->heat, ClosestHitLBVH);
+					FindClosestHitLBVH(testLBVH, lbvhLeafCount, vec->rc->rayOrigin, rayEnd, tHit, hitpos, hitNode, vec->heat, ClosestHitLBVH);
 
 					float final = 0.f;
 
