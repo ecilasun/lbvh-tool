@@ -193,7 +193,7 @@ bool ClosestHitTriangle(const SRadixTreeNode &_self, const SVec128 &_rayStart, c
 		return false;
 	
 	SVec128 deltaRay = EVecSub(_rayEnd, _rayStart);
-	bool isHit = HitTriangle (
+	bool isHit = HitTriangle(
 		_hitinfo.geometryIn[tri].coords[0],
 		_hitinfo.geometryIn[tri].coords[1],
 		_hitinfo.geometryIn[tri].coords[2],
