@@ -199,7 +199,7 @@ bool ClosestHitTriangle(const SRadixTreeNode &_self, const SVec128 &_rayStart, c
 		_rayStart, EVecSub(_rayEnd, _rayStart),
 		_t, _tmax );
 
-	if (isHit && _hitinfo.numHits < 16)
+	if (isHit && _hitinfo.numHits < 16 && _t < _tmax)
 	{
 		_hitinfo.hitT[_hitinfo.numHits] = _t;
 		_hitinfo.triIndex[_hitinfo.numHits] = tri;
@@ -218,10 +218,14 @@ bool ClosestHitBLAS(const SRadixTreeNode &_self, const SVec128 &_rayStart, const
 	SVec128 hitpos;
 	uint32_t hitNode = 0xFFFFFFFF;
 	_hitinfo.geometry = sceneBLASNodes[blas].geometry;
-	FindClosestHitLBVH(sceneBLASNodes[blas].BLAS, sceneBLASNodes[blas].leafCount, _rayStart, _rayEnd, _t, hitpos, hitNode, _hitinfo, ClosestHitTriangle);
+	float tHit;
+	FindClosestHitLBVH(sceneBLASNodes[blas].BLAS, sceneBLASNodes[blas].leafCount, _rayStart, _rayEnd, tHit, hitpos, hitNode, _hitinfo, ClosestHitTriangle);
 
-	if (hitNode != 0xFFFFFFFF && _t < _tmax)
-		return true;
+	if (hitNode != 0xFFFFFFFF)
+	{
+		_t = tHit;
+		return _t < _tmax ? true : false;
+	}
 
 	return false;
 }
