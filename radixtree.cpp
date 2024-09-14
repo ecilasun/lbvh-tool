@@ -223,10 +223,9 @@ void GenerateLBVH(SRadixTreeNode *_nodes, std::vector<SRadixTreeNode> &_leafNode
 	ComputeAABBs(_nodes, rootNode, _numNodes);
 }
 
-void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, HitInfo &_hitInfo, HitTestFunc _hitTestFunc)
+void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, uint32_t &_hitNode, HitInfo &_hitInfo, HitTestFunc _hitTestFunc)
 {
 	SVec128 rayDelta = EVecSetW(EVecSub(_rayEnd, _rayStart), 1.f);
-	SVec128 rayDir = EVecNorm3(rayDelta);
 	SVec128 invDelta = EVecRcp(rayDelta);
 	_hitNode = 0xFFFFFFFF;
 	float closestHit = FLT_MAX;
@@ -246,15 +245,14 @@ void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec1
 		{
 			if (self.m_left == 0xFFFFFFFF /*&& self.m_right==0xFFFFFFFF*/) // Leaf node
 			{
-				float t;
+				float t = enter;
 				// Hit only if we're going through the triangle and are closer than before
-				bool triHit = _hitTestFunc(self, _rayStart, _rayEnd, rayDir, t, closestHit, _hitInfo);
+				bool triHit = _hitTestFunc(self, _rayStart, _rayEnd, t, closestHit, _hitInfo);
 				if (triHit)
 				{
-					// Remember this hit, and resume
-					_hitPos = EVecAdd(_rayStart, EVecMul(rayDelta, EVecConst(t,t,t,0.f)));
-					_hitNode = currentNodeIndex;
 					closestHit = t;
+					// Remember this hit, and resume
+					_hitNode = currentNodeIndex;
 					_t = t;
 				}
 			}

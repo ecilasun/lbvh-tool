@@ -1778,9 +1778,9 @@ EInline void CalculateBarycentrics(SVec128 &P, SVec128 &v0, SVec128 &v1, SVec128
 	uvw[2] = 1.f - uvw[0] - uvw[1];
 }
 
-EInline bool HitTriangle(SVec128 &v0, SVec128 &v1, SVec128 &v2, SVec128 rayStart, SVec128 rayDir, float &t, float tmax)
+EInline bool HitTriangle(SVec128 &v0, SVec128 &v1, SVec128 &v2, SVec128 rayStart, SVec128 rayDir, float &t)
 {
-	t = tmax;
+	t = FLT_MAX;
 
 	SVec128 e1 = EVecSub(v2, v0);
 	SVec128 e2 = EVecSub(v1, v0);
@@ -1796,7 +1796,7 @@ EInline bool HitTriangle(SVec128 &v0, SVec128 &v1, SVec128 &v2, SVec128 rayStart
 	float b2 = EVecGetFloatX(EVecDot3(rayDir, s2)) * invd;
 	float temp = EVecGetFloatX(EVecDot3(e2, s2)) * invd;
 
-	if (b1<0.f || b1>1.f || b2<0.f || b1+b2>1.f || temp<0.f || temp>tmax)
+	if (b1<0.f || b1>1.f || b2<0.f || b1+b2>1.f || temp<0.f)
 		return false;
 
 	t = temp;

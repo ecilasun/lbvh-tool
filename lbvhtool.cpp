@@ -186,45 +186,48 @@ void BLASBuilder(uint32_t& leafCount, triangle* _triangles, uint32_t _numTriangl
 	GenerateLBVH(*_lbvh, _leafnodes, leafCount);
 }
 
-bool ClosestHitTriangle(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, const SVec128 &_rayDir, float &_t, const float _tmax, HitInfo &_hitinfo)
+bool ClosestHitTriangle(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, const float _tmax, HitInfo &_hitinfo)
 {
 	uint32_t tri = _self.m_primitiveIndex;
 	if (tri == 0xFFFFFFFF)
 		return false;
 	
+	SVec128 deltaRay = EVecSub(_rayEnd, _rayStart);
 	bool isHit = HitTriangle (
-		_hitinfo.geometry[tri].coords[0],
-		_hitinfo.geometry[tri].coords[1],
-		_hitinfo.geometry[tri].coords[2],
-		_rayStart, EVecSub(_rayEnd, _rayStart),
-		_t, _tmax );
+		_hitinfo.geometryIn[tri].coords[0],
+		_hitinfo.geometryIn[tri].coords[1],
+		_hitinfo.geometryIn[tri].coords[2],
+		_rayStart, deltaRay,
+		_t);
 
-	if (isHit && _hitinfo.numHits < 16 && _t < _tmax)
+	if (isHit && _t < _tmax)
 	{
-		_hitinfo.hitT[_hitinfo.numHits] = _t;
-		_hitinfo.triIndex[_hitinfo.numHits] = tri;
-		_hitinfo.numHits++;
+		_hitinfo.hitPos = EVecAdd(_rayStart, EVecMul(deltaRay, EVecConst(_t,_t,_t,0.f)));
+		_hitinfo.triIndex = tri;
+		_hitinfo.geometryOut = _hitinfo.geometryIn;
 	}
 
 	return isHit;
 }
 
-bool ClosestHitBLAS(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, const SVec128 &_rayDir, float &_t, const float _tmax, HitInfo &_hitinfo)
+bool ClosestHitBLAS(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, const float _tmax, HitInfo &_hitinfo)
 {
 	uint32_t blas = _self.m_primitiveIndex;
 	if (blas == 0xFFFFFFFF)
 		return false;
 
-	SVec128 hitpos;
-	uint32_t hitNode = 0xFFFFFFFF;
-	_hitinfo.geometry = sceneBLASNodes[blas].geometry;
-	float tHit;
-	FindClosestHitLBVH(sceneBLASNodes[blas].BLAS, sceneBLASNodes[blas].leafCount, _rayStart, _rayEnd, tHit, hitpos, hitNode, _hitinfo, ClosestHitTriangle);
-
-	if (hitNode != 0xFFFFFFFF)
+	if (_t < _tmax)
 	{
-		_t = tHit;
-		return _t < _tmax ? true : false;
+		// This node is closer, test it
+		uint32_t hitNode = 0xFFFFFFFF;
+		_hitinfo.geometryIn = sceneBLASNodes[blas].geometry;
+		float tHit;
+		FindClosestHitLBVH(sceneBLASNodes[blas].BLAS, sceneBLASNodes[blas].leafCount, _rayStart, _rayEnd, tHit, hitNode, _hitinfo, ClosestHitTriangle);
+		if (hitNode != 0xFFFFFFFF && _hitinfo.geometryOut)
+		{
+			//_t = tHit;
+			return true;
+		}
 	}
 
 	return false;
@@ -265,33 +268,32 @@ static int DispatcherThread(void *data)
 					SVec128 rayEnd = EVecAdd(vec->rc->rayOrigin, rayDir);
 
 					uint32_t hitNode = 0xFFFFFFFF;
-					SVec128 hitpos;
 
 					// TODO: trace sceneTLASNode.TLAS which then traces the inner BLAS nodes
-					vec->hitinfo.numHits = 0;
-					FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitpos, hitNode, vec->hitinfo, ClosestHitBLAS);
+					vec->hitinfo.geometryOut = nullptr;
+					FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitBLAS);
 
 					float final = 0.f;
 
-					if (hitNode != 0xFFFFFFFF && vec->hitinfo.numHits != 0)
+					if (hitNode != 0xFFFFFFFF && vec->hitinfo.geometryOut)
 					{
+						// The hit leaf node of the TLAS points at the BLAS to use
 						auto &self = sceneTLASNode.TLAS[hitNode];
-						uint32_t closestEntry = vec->hitinfo.numHits-1;
-						uint32_t tri = vec->hitinfo.triIndex[closestEntry];
-						triangle *model = sceneBLASNodes[self.m_primitiveIndex].geometry;
+
+						// The BLAS gives us the geometry to draw
+						triangle *model = vec->hitinfo.geometryOut;
+
+						uint32_t tri = vec->hitinfo.triIndex;
 
 						SVec128 sunPos{20.f,35.f,20.f,1.f};
-						SVec128 sunRay = EVecSub(sunPos, hitpos);
-						SVec128 invSunRay = EVecRcp(sunRay);
-						SVec128 nrm;
-
-						SVec128 viewRay = EVecNorm3(rayDir);
+						SVec128 sunRay = EVecSub(sunPos, vec->hitinfo.hitPos);
 
 						// Global + NdotL
 						{
 							SVec128 uvw;
 							float fuvw[3];
-							CalculateBarycentrics(hitpos,
+							CalculateBarycentrics(
+								vec->hitinfo.hitPos,
 								model[tri].coords[0],
 								model[tri].coords[1],
 								model[tri].coords[2], fuvw);
@@ -301,7 +303,7 @@ static int DispatcherThread(void *data)
 							SVec128 uvwzA = EVecMul(uvwz, model[tri].normals[0]); // A*uvw.zzz
 							SVec128 uvwyB = EVecMul(uvwy, model[tri].normals[1]); // B*uvw.yyy
 							SVec128 uvwxC = EVecMul(uvwx, model[tri].normals[2]); // C*uvw.xxx
-							nrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
+							SVec128 nrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
 							float L = fabs(EVecGetFloatX(EVecDot3(nrm, EVecNorm3(sunRay))));
 							final += L;
 						}

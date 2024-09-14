@@ -17,13 +17,13 @@ struct triangle final {
 
 struct HitInfo
 {
-	float hitT[16];
-	uint32_t triIndex[16];
-	uint32_t numHits{0};
-	triangle *geometry;
+	SVec128 hitPos;
+	uint32_t triIndex;
+	triangle *geometryIn;
+	triangle *geometryOut;
 };
 
-typedef bool(*HitTestFunc)(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, const SVec128 &_rayDir, float &_t, const float _tmax, HitInfo &_hitinfo);
+typedef bool(*HitTestFunc)(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, const float _tmax, HitInfo &_hitinfo);
 
 void GenerateLBVH(SRadixTreeNode *_nodes, std::vector<SRadixTreeNode> &_leafNodes, const int _numNodes);
-void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, HitInfo &_hitinfo, HitTestFunc _hitTestFunc);
+void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, uint32_t &_hitNode, HitInfo &_hitinfo, HitTestFunc _hitTestFunc);
