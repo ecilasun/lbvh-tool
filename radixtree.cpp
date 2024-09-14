@@ -181,7 +181,7 @@ SBoundingBox ComputeAABBs(SRadixTreeNode *_nodes, const int _idx, const int _num
 	SBoundingBox leftBound = self.m_bounds;
 	SBoundingBox rightBound = self.m_bounds;
 
-	if (self.m_left != 0xFFFFFFFF && self.m_right != 0xFFFFFFFF)
+	if (self.m_left != 0xFFFFFFFF)// && self.m_right != 0xFFFFFFFF)
 	{
 		leftBound = ComputeAABBs(_nodes, self.m_left, _numNodes);
 		rightBound = ComputeAABBs(_nodes, self.m_right, _numNodes);
@@ -223,7 +223,7 @@ void GenerateLBVH(SRadixTreeNode *_nodes, std::vector<SRadixTreeNode> &_leafNode
 	ComputeAABBs(_nodes, rootNode, _numNodes);
 }
 
-void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, uint32_t &_heat, HitTestFunc _hitTestFunc)
+void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, HitInfo &_hitInfo, HitTestFunc _hitTestFunc)
 {
 	SVec128 rayDelta = EVecSetW(EVecSub(_rayEnd, _rayStart), 1.f);
 	SVec128 rayDir = EVecNorm3(rayDelta);
@@ -244,11 +244,11 @@ void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec1
 		bool hit = IntersectSlab(self.m_bounds.m_Min, self.m_bounds.m_Max, _rayStart, rayDelta, invDelta, enter);
 		if (hit)
 		{
-			if (self.m_left==0xFFFFFFFF /*&& self.m_right==0xFFFFFFFF*/) // Leaf node
+			if (self.m_left == 0xFFFFFFFF /*&& self.m_right==0xFFFFFFFF*/) // Leaf node
 			{
 				float t;
 				// Hit only if we're going through the triangle and are closer than before
-				bool triHit = _hitTestFunc(self, _rayStart, _rayEnd, rayDir, t, closestHit, _heat);
+				bool triHit = _hitTestFunc(self, _rayStart, _rayEnd, rayDir, t, closestHit, _hitInfo);
 				if (triHit)
 				{
 					// Remember this hit, and resume

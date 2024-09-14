@@ -10,12 +10,20 @@ struct SRadixTreeNode
     uint32_t m_left{0xFFFFFFFF}, m_right{0xFFFFFFFF};
 };
 
-struct SRTGeometryNode
-{
-    SVec128 v0, v1, v2;
+struct triangle final {
+  SVec128 coords[3];
+  SVec128 normals[3];
 };
 
-typedef bool(*HitTestFunc)(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, const SVec128 &_rayDir, float &_t, const float _tmax, uint32_t &_heat);
+struct HitInfo
+{
+	float hitT[16];
+	uint32_t triIndex[16];
+	uint32_t numHits{0};
+	triangle *geometry;
+};
+
+typedef bool(*HitTestFunc)(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, const SVec128 &_rayDir, float &_t, const float _tmax, HitInfo &_hitinfo);
 
 void GenerateLBVH(SRadixTreeNode *_nodes, std::vector<SRadixTreeNode> &_leafNodes, const int _numNodes);
-void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, uint32_t &_heat, HitTestFunc _hitTestFunc);
+void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, SVec128 &_hitPos, uint32_t &_hitNode, HitInfo &_hitinfo, HitTestFunc _hitTestFunc);

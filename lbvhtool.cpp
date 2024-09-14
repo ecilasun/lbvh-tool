@@ -7,15 +7,6 @@
 //#define SCENENAME "sibenik"
 #define SCENENAME "testscene"
 
-// NOTE: Once there's a correct cell vs triangle test, this will be reduced
-#define MAX_NODE_TRIS 64
-
-// Depth of traversal stack
-#define MAX_STACK_ENTRIES 16
-
-// Define to see traversal count per tile
-//#define SHOW_HEATMAP
-
 // Define this to get worker tile debug view
 //#define SHOW_WORKER_IDS
 
@@ -33,7 +24,7 @@ static const uint32_t width = 512;
 static const uint32_t height = 512;
 #else
 // 320x240 but x2
-static const uint32_t tilewidth = 4;
+static const uint32_t tilewidth = 8;
 static const uint32_t tileheight = 8;
 static const uint32_t width = 512;
 static const uint32_t height = 512;
@@ -63,95 +54,98 @@ struct SRenderContext
 struct SWorkerContext
 {
 	uint32_t workerID{0};
-	uint32_t heat{0};
+	HitInfo hitinfo{0};
 	uint8_t rasterTile[4*tilewidth*tileheight]; // Internal rasterization tile (in hardware, to avoid arbitration need)
 	SRenderContext *rc;
 	CLocklessPipe<12> dispatchvector;
 };
 
-// NOTE: This structure is very expensive for E32E, a data reduction method has to be applied here.
-// One approach could be to only stash connected triangle fans here.
-struct BVH8LeafNode
-{
-	uint32_t m_numTriangles{0};
-	uint32_t m_triangleIndices[MAX_NODE_TRIS]{};
-};
-
-struct triangle final {
-  SVec128 coords[3];
-  SVec128 normals[3];
-};
-
-struct hitinfo final {
-	float hitT;
-};
-
+// TLAS
 triangle *sceneGeometry;
-SRadixTreeNode* testLBVH;
-std::vector<SRadixTreeNode> testLeafnodes;
-uint32_t lbvhLeafCount = 0;
 
-static const uint32_t MAX_CLIPPED_VERTICES = 36;
+// BLAS
+struct BLASNode {
+	SVec128 aabbMin;
+	SVec128 aabbMax;
+	triangle *geometry;
+	//SMatrix4x4 transform;
+	uint32_t numTriangles;
+	SRadixTreeNode* BLAS;
+	uint32_t leafCount = 0;
+};
 
-void ClipEdgeToPlaneBegin(SVec128 _planeNormal, SVec128 _planeOrigin, SVec128& _prevPos, SVec128 _pos, float &_prevDist, int& _clipIndex, SVec128 _vClip[MAX_CLIPPED_VERTICES])
+struct TLASNode {
+	SVec128 aabbMin;
+	SVec128 aabbMax;
+	SRadixTreeNode* TLAS;
+	uint32_t leafCount = 0;
+};
+
+BLASNode sceneBLASNodes[16];
+uint32_t sceneBLASNodeCount = 0;
+TLASNode sceneTLASNode;
+
+void TLASBuilder(uint32_t& leafCount, BLASNode* _BLASnodes, uint32_t _numBLASnodes, std::vector<SRadixTreeNode> &_leafnodes, SRadixTreeNode **_lbvh, SVec128 &_worldMin, SVec128 &_worldMax)
 {
-	SVec128 dotCurr = EVecDot3(_planeNormal, EVecSub(_pos, _planeOrigin));
-	float dist = EVecGetFloatX(dotCurr);
+	_worldMin = EVecConst(FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX);
+	_worldMax = EVecConst(-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX);
 
-	// No previous point, this is the first vertex [A>]------>B
-	if (dist >= 0.f) // vertex is in front of or on the plane
-		_vClip[_clipIndex++] = _pos;
-	// else, vertex is behind the plane, ignore it
-
-	// Remember where we came from
-	_prevPos = _pos;
-	_prevDist = dist;
-}
-
-void ClipEdgeToPlaneNext(SVec128 _planeNormal, SVec128 _planeOrigin, SVec128& _prevPos, SVec128 _pos, float &_prevDist, int& _clipIndex, SVec128 _vClip[MAX_CLIPPED_VERTICES])
-{
-	SVec128 dotCurr = EVecDot3(_planeNormal, EVecSub(_pos, _planeOrigin));
-	float dist = EVecGetFloatX(dotCurr);
-
-	float clipRatio = _prevDist / (_prevDist - dist);
-	SVec128 clipRatioVec = { clipRatio, clipRatio, clipRatio, 1.f };
-
-	uint32_t slotSelDist = dist < 0.f ? 1 : 0;
-	uint32_t slotSelPrevDist = _prevDist < 0.f ? 1 : 0;
-	uint32_t slot1 = (!slotSelDist && slotSelPrevDist) ? _clipIndex + 1 : MAX_CLIPPED_VERTICES - 1;
-
-	SVec128 clippedPos = EVecAdd(_prevPos, EVecMul(EVecSub(_pos, _prevPos), clipRatioVec));
-	_vClip[_clipIndex] = (slotSelDist ^ slotSelPrevDist) ? clippedPos : _pos;
-	_vClip[slot1] = _pos;
-
-	uint32_t stepSel = (slotSelDist && slotSelPrevDist) ? 0 : ((!slotSelDist && slotSelPrevDist) ? 2 : 1);
-	_clipIndex += stepSel;
-
-	// Remember where we came from
-	_prevPos = _pos;
-	_prevDist = dist;
-}
-
-
-void bvhBuilder(triangle* _triangles, uint32_t _numTriangles, std::vector<SRadixTreeNode> &_leafnodes, SRadixTreeNode **_lbvh)
-{
-	// Generate bounds AABB
-	SVec128 sceneMin{FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX};
-	SVec128 sceneMax{-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX};
-
-	for (uint32_t i = 0; i < _numTriangles; ++i)
+	for (uint32_t i = 0; i < _numBLASnodes; ++i)
 	{
-		sceneMin = EVecMin(sceneMin, _triangles[i].coords[0]);
-		sceneMin = EVecMin(sceneMin, _triangles[i].coords[1]);
-		sceneMin = EVecMin(sceneMin, _triangles[i].coords[2]);
-
-		sceneMax = EVecMax(sceneMax, _triangles[i].coords[0]);
-		sceneMax = EVecMax(sceneMax, _triangles[i].coords[1]);
-		sceneMax = EVecMax(sceneMax, _triangles[i].coords[2]);
+		_worldMin = EVecMin(_worldMin, _BLASnodes[i].aabbMin);
+		_worldMax = EVecMax(_worldMax, _BLASnodes[i].aabbMax);
 	}
 
 	SVec128 tentwentythree{1023.f, 1023.f, 1023.f, 1.f};
-	SVec128 sceneBounds = EVecSub(sceneMax, sceneMin);
+	SVec128 sceneBounds = EVecSub(_worldMax, _worldMin);
+	SVec128 gridCellSize = EVecDiv(sceneBounds, tentwentythree);
+	SVec128 pointfive{0.5f, 0.5f, 0.5f, 1.f};
+
+	// Generate BLAS pool
+
+	_leafnodes.clear();
+
+	for (uint32_t b = 0; b < _numBLASnodes; ++b)
+	{
+		SVec128 origin = EVecMul(EVecAdd(_BLASnodes[b].aabbMax, _BLASnodes[b].aabbMin), pointfive);
+
+		uint32_t qXYZ[3];
+		EQuantizePosition(origin, qXYZ, _worldMin, gridCellSize);
+		uint32_t mortonCode = EMortonEncode(qXYZ[0], qXYZ[1], qXYZ[2]);
+
+		SRadixTreeNode node;
+		node.m_bounds.m_Min = _BLASnodes[b].aabbMin;
+		node.m_bounds.m_Max = _BLASnodes[b].aabbMax;
+		node.m_primitiveIndex = b;
+		node.m_spatialKey = mortonCode;
+		_leafnodes.emplace_back(node);
+	}
+
+	leafCount = (uint32_t)_leafnodes.size();
+	*_lbvh = new SRadixTreeNode[2*leafCount-1];
+
+	GenerateLBVH(*_lbvh, _leafnodes, leafCount);
+}
+
+void BLASBuilder(uint32_t& leafCount, triangle* _triangles, uint32_t _numTriangles, std::vector<SRadixTreeNode> &_leafnodes, SRadixTreeNode **_lbvh, SVec128 &_sceneMin, SVec128 &_sceneMax)
+{
+	// Generate bounds AABB
+	_sceneMin = EVecConst(FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX);
+	_sceneMax = EVecConst(-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX);
+
+	for (uint32_t i = 0; i < _numTriangles; ++i)
+	{
+		_sceneMin = EVecMin(_sceneMin, _triangles[i].coords[0]);
+		_sceneMin = EVecMin(_sceneMin, _triangles[i].coords[1]);
+		_sceneMin = EVecMin(_sceneMin, _triangles[i].coords[2]);
+
+		_sceneMax = EVecMax(_sceneMax, _triangles[i].coords[0]);
+		_sceneMax = EVecMax(_sceneMax, _triangles[i].coords[1]);
+		_sceneMax = EVecMax(_sceneMax, _triangles[i].coords[2]);
+	}
+
+	SVec128 tentwentythree{1023.f, 1023.f, 1023.f, 1.f};
+	SVec128 sceneBounds = EVecSub(_sceneMax, _sceneMin);
 	SVec128 gridCellSize = EVecDiv(sceneBounds, tentwentythree);
 
 	// Generate geometry pool
@@ -175,7 +169,7 @@ void bvhBuilder(triangle* _triangles, uint32_t _numTriangles, std::vector<SRadix
 		SVec128 origin = EVecMul(EVecAdd(v0, EVecAdd(v1, v2)), onethird);
 
 		uint32_t qXYZ[3];
-		EQuantizePosition(origin, qXYZ, sceneMin, gridCellSize);
+		EQuantizePosition(origin, qXYZ, _sceneMin, gridCellSize);
 		uint32_t mortonCode = EMortonEncode(qXYZ[0], qXYZ[1], qXYZ[2]);
 
 		SRadixTreeNode node;
@@ -186,30 +180,50 @@ void bvhBuilder(triangle* _triangles, uint32_t _numTriangles, std::vector<SRadix
 		_leafnodes.emplace_back(node);
 	}
 
-	lbvhLeafCount = (uint32_t)_leafnodes.size();
-	*_lbvh = new SRadixTreeNode[2*lbvhLeafCount-1];
+	leafCount = (uint32_t)_leafnodes.size();
+	*_lbvh = new SRadixTreeNode[2*leafCount-1];
 
-	GenerateLBVH(*_lbvh, _leafnodes, lbvhLeafCount);
-
-	printf("LBVH data generated. Leaf node count:%d\n", lbvhLeafCount);
+	GenerateLBVH(*_lbvh, _leafnodes, leafCount);
 }
 
-bool ClosestHitLBVH(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, const SVec128 &_rayDir, float &_t, const float _tmax, uint32_t &_heat)
+bool ClosestHitTriangle(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, const SVec128 &_rayDir, float &_t, const float _tmax, HitInfo &_hitinfo)
 {
 	uint32_t tri = _self.m_primitiveIndex;
 	if (tri == 0xFFFFFFFF)
 		return false;
 	
 	bool isHit = HitTriangle (
-		sceneGeometry[tri].coords[0],
-		sceneGeometry[tri].coords[1],
-		sceneGeometry[tri].coords[2],
+		_hitinfo.geometry[tri].coords[0],
+		_hitinfo.geometry[tri].coords[1],
+		_hitinfo.geometry[tri].coords[2],
 		_rayStart, EVecSub(_rayEnd, _rayStart),
 		_t, _tmax );
 
-	_heat += isHit ? 1:0;
+	if (isHit && _hitinfo.numHits < 16)
+	{
+		_hitinfo.hitT[_hitinfo.numHits] = _t;
+		_hitinfo.triIndex[_hitinfo.numHits] = tri;
+		_hitinfo.numHits++;
+	}
 
 	return isHit;
+}
+
+bool ClosestHitBLAS(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, const SVec128 &_rayDir, float &_t, const float _tmax, HitInfo &_hitinfo)
+{
+	uint32_t blas = _self.m_primitiveIndex;
+	if (blas == 0xFFFFFFFF)
+		return false;
+
+	SVec128 hitpos;
+	uint32_t hitNode = 0xFFFFFFFF;
+	_hitinfo.geometry = sceneBLASNodes[blas].geometry;
+	FindClosestHitLBVH(sceneBLASNodes[blas].BLAS, sceneBLASNodes[blas].leafCount, _rayStart, _rayEnd, _t, hitpos, hitNode, _hitinfo, ClosestHitTriangle);
+
+	if (hitNode != 0xFFFFFFFF && _t < _tmax)
+		return true;
+
+	return false;
 }
 
 static int DispatcherThread(void *data)
@@ -249,15 +263,18 @@ static int DispatcherThread(void *data)
 					uint32_t hitNode = 0xFFFFFFFF;
 					SVec128 hitpos;
 
-					vec->heat = 0;
-					FindClosestHitLBVH(testLBVH, lbvhLeafCount, vec->rc->rayOrigin, rayEnd, tHit, hitpos, hitNode, vec->heat, ClosestHitLBVH);
+					// TODO: trace sceneTLASNode.TLAS which then traces the inner BLAS nodes
+					vec->hitinfo.numHits = 0;
+					FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitpos, hitNode, vec->hitinfo, ClosestHitBLAS);
 
 					float final = 0.f;
 
-					if (hitNode != 0xFFFFFFFF)
+					if (hitNode != 0xFFFFFFFF && vec->hitinfo.numHits != 0)
 					{
-						auto &self = testLBVH[hitNode];
-						uint32_t tri = self.m_primitiveIndex;
+						auto &self = sceneTLASNode.TLAS[hitNode];
+						uint32_t closestEntry = vec->hitinfo.numHits-1;
+						uint32_t tri = vec->hitinfo.triIndex[closestEntry];
+						triangle *model = sceneBLASNodes[self.m_primitiveIndex].geometry;
 
 						SVec128 sunPos{20.f,35.f,20.f,1.f};
 						SVec128 sunRay = EVecSub(sunPos, hitpos);
@@ -271,15 +288,15 @@ static int DispatcherThread(void *data)
 							SVec128 uvw;
 							float fuvw[3];
 							CalculateBarycentrics(hitpos,
-								sceneGeometry[tri].coords[0],
-								sceneGeometry[tri].coords[1],
-								sceneGeometry[tri].coords[2], fuvw);
+								model[tri].coords[0],
+								model[tri].coords[1],
+								model[tri].coords[2], fuvw);
 							SVec128 uvwx = EVecSplatX(EVecConst(fuvw[0]));
 							SVec128 uvwy = EVecSplatX(EVecConst(fuvw[1]));
 							SVec128 uvwz = EVecSplatX(EVecConst(fuvw[2]));
-							SVec128 uvwzA = EVecMul(uvwz, sceneGeometry[tri].normals[0]); // A*uvw.zzz
-							SVec128 uvwyB = EVecMul(uvwy, sceneGeometry[tri].normals[1]); // B*uvw.yyy
-							SVec128 uvwxC = EVecMul(uvwx, sceneGeometry[tri].normals[2]); // C*uvw.xxx
+							SVec128 uvwzA = EVecMul(uvwz, model[tri].normals[0]); // A*uvw.zzz
+							SVec128 uvwyB = EVecMul(uvwy, model[tri].normals[1]); // B*uvw.yyy
+							SVec128 uvwxC = EVecMul(uvwx, model[tri].normals[2]); // C*uvw.xxx
 							nrm = EVecNorm3(EVecAdd(uvwzA, EVecAdd(uvwyB, uvwxC))); // A*uvw.zzz + B*uvw.yyy + C*uvw.xxx
 							float L = fabs(EVecGetFloatX(EVecDot3(nrm, EVecNorm3(sunRay))));
 							final += L;
@@ -298,10 +315,6 @@ static int DispatcherThread(void *data)
 					p[(ix+iy*tilewidth)*4+2] = C; // R
 					p[(ix+iy*tilewidth)*4+3] = 0xFF;
 #endif // SHOW_WORKER_IDS
-
-#if defined(SHOW_HEATMAP)
-					p[(ix+iy*tilewidth)*4+2] = (vec->heat*64)%255; // R
-#endif
 				}
 			}
 
@@ -373,11 +386,14 @@ int SDL_main(int _argc, char** _argv)
 
 	sceneGeometry = new triangle[totaltriangles];
 
-	//auto &mesh = objloader.LoadedMeshes[1]; // Just the floor plane..
+	// Build BLAS array
 	for (auto &mesh : objloader.LoadedMeshes) // ..or, the entire scene
 	{
 		int triCount = mesh.Indices.size()/3;
-		for (int i=0;i<triCount;++i)
+		// Start of model
+		triangle *model = &sceneGeometry[t];
+		uint32_t modelTriCount = 0;
+		for (int i=0; i<triCount; ++i)
 		{
 			int tri = i*3;
 			unsigned int i0 = mesh.Indices[tri+0];
@@ -393,11 +409,46 @@ int SDL_main(int _argc, char** _argv)
 			sceneGeometry[t].normals[2] = EVecConst( mesh.Vertices[i2].Normal.X, mesh.Vertices[i2].Normal.Y, mesh.Vertices[i2].Normal.Z, 0.f);
 
 			++t;
+			++modelTriCount;
+		}
+
+		// Build BLAS
+		if (modelTriCount)
+		{
+			std::vector<SRadixTreeNode> tmpNodes;
+			sceneBLASNodes[sceneBLASNodeCount].geometry = model;
+			sceneBLASNodes[sceneBLASNodeCount].numTriangles = modelTriCount;
+			BLASBuilder(sceneBLASNodes[sceneBLASNodeCount].leafCount,
+				model, modelTriCount, tmpNodes,
+				&sceneBLASNodes[sceneBLASNodeCount].BLAS,
+				sceneBLASNodes[sceneBLASNodeCount].aabbMin,
+				sceneBLASNodes[sceneBLASNodeCount].aabbMax);
+			//EMatIdentity(sceneBLASNodes[sceneBLASNodeCount].transform);
+
+			fprintf(stderr, "BLAS %d numTri:%d bounds: (%f,%f,%f)-(%f,%f,%f)\n",
+				sceneBLASNodeCount,
+				modelTriCount,
+				EVecGetFloatX(sceneBLASNodes[sceneBLASNodeCount].aabbMin),
+				EVecGetFloatY(sceneBLASNodes[sceneBLASNodeCount].aabbMin),
+				EVecGetFloatZ(sceneBLASNodes[sceneBLASNodeCount].aabbMin),
+				EVecGetFloatX(sceneBLASNodes[sceneBLASNodeCount].aabbMax),
+				EVecGetFloatY(sceneBLASNodes[sceneBLASNodeCount].aabbMax),
+				EVecGetFloatZ(sceneBLASNodes[sceneBLASNodeCount].aabbMax));
+
+			++sceneBLASNodeCount;
 		}
 	}
 
-	// Build LBVH
-	bvhBuilder(sceneGeometry, totaltriangles, testLeafnodes, &testLBVH);
+	// Build TLAS
+	if (sceneBLASNodeCount)
+	{
+		std::vector<SRadixTreeNode> tmpNodes;
+		TLASBuilder(sceneTLASNode.leafCount,
+			sceneBLASNodes, sceneBLASNodeCount, tmpNodes,
+			&sceneTLASNode.TLAS,
+			sceneTLASNode.aabbMin,
+			sceneTLASNode.aabbMax);
+	}
 
 	// Trace the BVH
 	if(SDL_Init(SDL_INIT_VIDEO) != 0)
@@ -518,7 +569,9 @@ int SDL_main(int _argc, char** _argv)
 	} while (!done);
 
 	delete [] sceneGeometry;
-	delete testLBVH;
+	for (uint32_t i=0; i<sceneBLASNodeCount; ++i)
+		delete [] sceneBLASNodes[i].BLAS;
+	delete [] sceneTLASNode.TLAS;
 
 	g_done = true;
 
