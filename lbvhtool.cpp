@@ -574,10 +574,10 @@ int SDL_main(int _argc, char** _argv)
 
 	} while (!done);
 
-	delete [] sceneGeometry;
 	for (uint32_t i=0; i<sceneBLASNodeCount; ++i)
 		delete [] sceneBLASNodes[i].BLAS;
 	delete [] sceneTLASNode.TLAS;
+	delete [] sceneGeometry;
 
 	g_done = true;
 
