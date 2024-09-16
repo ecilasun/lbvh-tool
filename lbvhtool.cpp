@@ -68,9 +68,10 @@ struct BLASNode {
 	SVec128 aabbMin;
 	SVec128 aabbMax;
 	triangle *geometry;
-	//SMatrix4x4 transform;
 	uint32_t numTriangles;
 	SRadixTreeNode* BLAS;
+	SMatrix4x4 transform;
+	SMatrix4x4 invTransform;
 	uint32_t leafCount = 0;
 };
 
@@ -127,25 +128,30 @@ void TLASBuilder(uint32_t& leafCount, BLASNode* _BLASnodes, uint32_t _numBLASnod
 	GenerateLBVH(*_lbvh, _leafnodes, leafCount);
 }
 
-void BLASBuilder(uint32_t& leafCount, triangle* _triangles, uint32_t _numTriangles, std::vector<SRadixTreeNode> &_leafnodes, SRadixTreeNode **_lbvh, SVec128 &_sceneMin, SVec128 &_sceneMax)
+void BLASBuilder(uint32_t& leafCount, triangle* _triangles, uint32_t _numTriangles, std::vector<SRadixTreeNode> &_leafnodes, SRadixTreeNode **_lbvh, SVec128 &_blasMin, SVec128 &_blasMax)
 {
 	// Generate bounds AABB
-	_sceneMin = EVecConst(FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX);
-	_sceneMax = EVecConst(-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX);
-
+	_blasMin = EVecConst(FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX);
+	_blasMax = EVecConst(-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX);
 	for (uint32_t i = 0; i < _numTriangles; ++i)
 	{
-		_sceneMin = EVecMin(_sceneMin, _triangles[i].coords[0]);
-		_sceneMin = EVecMin(_sceneMin, _triangles[i].coords[1]);
-		_sceneMin = EVecMin(_sceneMin, _triangles[i].coords[2]);
+		_blasMin = EVecMin(_blasMin, _triangles[i].coords[0]);
+		_blasMin = EVecMin(_blasMin, _triangles[i].coords[1]);
+		_blasMin = EVecMin(_blasMin, _triangles[i].coords[2]);
 
-		_sceneMax = EVecMax(_sceneMax, _triangles[i].coords[0]);
-		_sceneMax = EVecMax(_sceneMax, _triangles[i].coords[1]);
-		_sceneMax = EVecMax(_sceneMax, _triangles[i].coords[2]);
+		_blasMax = EVecMax(_blasMax, _triangles[i].coords[0]);
+		_blasMax = EVecMax(_blasMax, _triangles[i].coords[1]);
+		_blasMax = EVecMax(_blasMax, _triangles[i].coords[2]);
 	}
 
+	// Grab the center point and build a simple offset transform
+	//SVec128 boundCenter = EVecMul(EVecAdd(_blasMax, _blasMin), EVecConst(0.5f,0.5f,0.5f,1.f));
+	//transform = ...;
+	// Build inverse transform for ray tests
+	//invTransform = ...;
+
 	SVec128 tentwentythree{1023.f, 1023.f, 1023.f, 1.f};
-	SVec128 sceneBounds = EVecSub(_sceneMax, _sceneMin);
+	SVec128 sceneBounds = EVecSub(_blasMax, _blasMin);
 	SVec128 gridCellSize = EVecDiv(sceneBounds, tentwentythree);
 
 	// Generate geometry pool
@@ -169,7 +175,7 @@ void BLASBuilder(uint32_t& leafCount, triangle* _triangles, uint32_t _numTriangl
 		SVec128 origin = EVecMul(EVecAdd(v0, EVecAdd(v1, v2)), onethird);
 
 		uint32_t qXYZ[3];
-		EQuantizePosition(origin, qXYZ, _sceneMin, gridCellSize);
+		EQuantizePosition(origin, qXYZ, _blasMin, gridCellSize);
 		uint32_t mortonCode = EMortonEncode(qXYZ[0], qXYZ[1], qXYZ[2]);
 
 		SRadixTreeNode node;

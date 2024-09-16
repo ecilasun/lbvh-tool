@@ -317,6 +317,7 @@ const SVec128 g_XMMask3 = EVecIntAsFloat(EVecConsti(0xFFFFFFFF, 0xFFFFFFFF, 0xFF
 const SVec128 g_XMMaskW = EVecIntAsFloat(EVecConsti(0x00000000, 0x00000000, 0x00000000, 0xFFFFFFFF));
 const SVec128 g_XMOne = { 1.0f,1.0f,1.0f,1.0f };
 const SVec128 g_XMZero = { 0.0f,0.0f,0.0f,0.0f };
+const SVec128 g_XMMaxFloat = { FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX };
 const SVec128 g_XMNegativeOne = {-1.0f,-1.0f,-1.0f,-1.0f};
 const SVec128 g_XMIdentityR0 = {1.0f, 0.0f, 0.0f, 0.0f};
 const SVec128 g_XMIdentityR1 = {0.0f, 1.0f, 0.0f, 0.0f};
@@ -442,34 +443,34 @@ EInline float EVecMinComponent4(const SVec128 _Vec)
 // Mask generation for float vectors
 // --------------------------------------------------------------------------------
 
-EInline SVec128i EVecCmpEQ(const SVec128 _Vec1, const SVec128 _Vec2)
+EInline SVec128 EVecCmpEQ(const SVec128 _Vec1, const SVec128 _Vec2)
 {
-	return EVecFloatAsInt(_mm_cmpeq_ps(_Vec1, _Vec2));
+	return _mm_cmpeq_ps(_Vec1, _Vec2);
 }
 
-EInline SVec128i EVecCmpNEQ(const SVec128 _Vec1, const SVec128 _Vec2)
+EInline SVec128 EVecCmpNEQ(const SVec128 _Vec1, const SVec128 _Vec2)
 {
-	return EVecFloatAsInt(_mm_cmpneq_ps(_Vec1, _Vec2));
+	return _mm_cmpneq_ps(_Vec1, _Vec2);
 }
 
-EInline SVec128i EVecCmpGT(const SVec128 _Vec1, const SVec128 _Vec2)
+EInline SVec128 EVecCmpGT(const SVec128 _Vec1, const SVec128 _Vec2)
 {
-	return EVecFloatAsInt(_mm_cmpgt_ps(_Vec1, _Vec2));
+	return _mm_cmpgt_ps(_Vec1, _Vec2);
 }
 
-EInline SVec128i EVecCmpGE(const SVec128 _Vec1, const SVec128 _Vec2)
+EInline SVec128 EVecCmpGE(const SVec128 _Vec1, const SVec128 _Vec2)
 {
-	return EVecFloatAsInt(_mm_cmpge_ps(_Vec1, _Vec2));
+	return _mm_cmpge_ps(_Vec1, _Vec2);
 }
 
-EInline SVec128i EVecCmpLT(const SVec128 _Vec1, const SVec128 _Vec2)
+EInline SVec128 EVecCmpLT(const SVec128 _Vec1, const SVec128 _Vec2)
 {
-	return EVecFloatAsInt(_mm_cmplt_ps(_Vec1, _Vec2));
+	return _mm_cmplt_ps(_Vec1, _Vec2);
 }
 
-EInline SVec128i EVecCmpLE(const SVec128 _Vec1, const SVec128 _Vec2)
+EInline SVec128 EVecCmpLE(const SVec128 _Vec1, const SVec128 _Vec2)
 {
-	return EVecFloatAsInt(_mm_cmple_ps(_Vec1, _Vec2));
+	return _mm_cmple_ps(_Vec1, _Vec2);
 }
 
 EInline int EVecMoveMask(const SVec128i _mask)

@@ -225,8 +225,19 @@ void GenerateLBVH(SRadixTreeNode *_nodes, std::vector<SRadixTreeNode> &_leafNode
 
 void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, uint32_t &_hitNode, HitInfo &_hitInfo, HitTestFunc _hitTestFunc)
 {
+	// For cases where divide by zero throws exceptions, use the following approach
 	SVec128 rayDelta = EVecSetW(EVecSub(_rayEnd, _rayStart), 1.f);
-	SVec128 invDelta = EVecRcp(rayDelta);
+	// Generate select mask
+	SVec128 zeroMask = EVecCmpEQ(rayDelta, EVecZero());
+	// Mix using mask to generate reciprocal divisor
+	SVec128 divisor = EVecSel(g_XMMaxFloat, g_XMOne, zeroMask);
+	// Reciprocal by division instead of rcp instruction
+	SVec128 invDelta = EVecDiv(divisor, rayDelta);
+
+	// Use this version when division by zero is allowed and generates +/- infinity
+	//SVec128 rayDelta = EVecSetW(EVecSub(_rayEnd, _rayStart), 1.f);
+	//SVec128 invDelta = EVecRcp(rayDelta);
+
 	_hitNode = 0xFFFFFFFF;
 	float closestHit = FLT_MAX;
 
