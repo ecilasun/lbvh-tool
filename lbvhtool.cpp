@@ -12,6 +12,7 @@
 
 // Number of worker threads
 #define MAX_WORKERS 1
+// TODO: #define MAX_WORKERS 16
 
 // Define to use Morton curve order instead of scanline order
 //#define USE_MORTON_ORDER
@@ -378,8 +379,8 @@ static int DispatcherThread(void *data)
 					// TODO: trace sceneTLASNode.TLAS which then traces the inner BLAS nodes
 					vec->hitinfo.geometryOut = nullptr;
 					vec->hitinfo.traversalCount = 0;
-					//FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitBLAS);
-					FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitPLAS);
+					FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitBLAS);
+					//FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitPLAS);
 
 					float final = 0.f;
 
