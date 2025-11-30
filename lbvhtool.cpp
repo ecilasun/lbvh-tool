@@ -11,7 +11,7 @@
 //#define SHOW_WORKER_IDS
 
 // Number of worker threads
-#define MAX_WORKERS 12
+#define MAX_WORKERS 1
 
 // Define to use Morton curve order instead of scanline order
 //#define USE_MORTON_ORDER
@@ -327,7 +327,7 @@ bool ClosestHitPLAS(const SRadixTreeNode &_self, const SVec128 &_rayStart, const
 		// This node is closer, test it
 		uint32_t hitNode = 0xFFFFFFFF;
 		_hitinfo.geometryIn = sceneBLASNodes[blas].geometry;
-		float tHit;
+		float tHit = EVecGetFloatX((EVecSub(_rayEnd, _rayStart)));
 		FindClosestHitLBVHPacked(sceneBLASNodes[blas].PLAS, sceneBLASNodes[blas].leafCount, _rayStart, _rayEnd, tHit, hitNode, _hitinfo);
 		if (hitNode != 0xFFFFFFFF && _hitinfo.geometryOut)
 		{
@@ -378,8 +378,8 @@ static int DispatcherThread(void *data)
 					// TODO: trace sceneTLASNode.TLAS which then traces the inner BLAS nodes
 					vec->hitinfo.geometryOut = nullptr;
 					vec->hitinfo.traversalCount = 0;
-					FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitBLAS);
-					//FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitPLAS);
+					//FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitBLAS);
+					FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitPLAS);
 
 					float final = 0.f;
 

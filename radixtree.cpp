@@ -544,7 +544,7 @@ void fast_intersect_bbox(
 	const SVec128& box_max,
 	float t_min, float t_max, float& s0, float& s1)
 {
-    SVec128 oxinvdir = EVecMul(EVecSub(EVecZero(), ray_origin), ray_inv_dir);
+    SVec128 oxinvdir = EVecMul(g_XMNegativeOne, EVecMul(ray_origin, ray_inv_dir));
     SVec128 f = EVecAdd(EVecMul(box_max, ray_inv_dir), oxinvdir);
     SVec128 n = EVecAdd(EVecMul(box_min, ray_inv_dir), oxinvdir);
     SVec128 tmax = EVecMax(f, n);
