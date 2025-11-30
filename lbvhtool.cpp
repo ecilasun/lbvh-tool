@@ -70,6 +70,7 @@ struct BLASNode {
 	triangle *geometry;
 	uint32_t numTriangles;
 	SRadixTreeNode* BLAS;
+	SPackedRadixTreeNode* PLAS;
 	SMatrix4x4 transform;
 	SMatrix4x4 invTransform;
 	uint32_t leafCount = 0;
@@ -192,6 +193,82 @@ void BLASBuilder(uint32_t& leafCount, triangle* _triangles, uint32_t _numTriangl
 	GenerateLBVH(*_lbvh, _leafnodes, leafCount);
 }
 
+void PLASBuilder(uint32_t& leafCount, triangle* _triangles, uint32_t _numTriangles, std::vector<SPackedRadixTreeNode> &_leafnodes, SPackedRadixTreeNode **_lbvh, SVec128 &_blasMin, SVec128 &_blasMax)
+{
+	// Generate bounds AABB
+	_blasMin = EVecConst(FLT_MAX,FLT_MAX,FLT_MAX,FLT_MAX);
+	_blasMax = EVecConst(-FLT_MAX,-FLT_MAX,-FLT_MAX,-FLT_MAX);
+	for (uint32_t i = 0; i < _numTriangles; ++i)
+	{
+		_blasMin = EVecMin(_blasMin, _triangles[i].coords[0]);
+		_blasMin = EVecMin(_blasMin, _triangles[i].coords[1]);
+		_blasMin = EVecMin(_blasMin, _triangles[i].coords[2]);
+
+		_blasMax = EVecMax(_blasMax, _triangles[i].coords[0]);
+		_blasMax = EVecMax(_blasMax, _triangles[i].coords[1]);
+		_blasMax = EVecMax(_blasMax, _triangles[i].coords[2]);
+	}
+
+	// Grab the center point and build a simple offset transform
+	//SVec128 boundCenter = EVecMul(EVecAdd(_blasMax, _blasMin), EVecConst(0.5f,0.5f,0.5f,1.f));
+	//transform = ...;
+	// Build inverse transform for ray tests
+	//invTransform = ...;
+
+	SVec128 tentwentythree{1023.f, 1023.f, 1023.f, 1.f};
+	SVec128 sceneBounds = EVecSub(_blasMax, _blasMin);
+	SVec128 gridCellSize = EVecDiv(sceneBounds, tentwentythree);
+
+	// Generate geometry pool
+
+	_leafnodes.clear();
+	SVec128 onethird = EVecConst(0.3333333f, 0.3333333f, 0.3333333f, 0.f);
+
+	for (uint32_t tri = 0; tri < _numTriangles; ++tri)
+	{
+		SBoundingBox primitiveAABB;
+		EResetBounds(primitiveAABB);
+
+		SVec128 v0 = EVecSetW(_triangles[tri].coords[0], 1.f);
+		SVec128 v1 = EVecSetW(_triangles[tri].coords[1], 1.f);
+		SVec128 v2 = EVecSetW(_triangles[tri].coords[2], 1.f);
+
+		EExpandBounds(primitiveAABB, v0);
+		EExpandBounds(primitiveAABB, v1);
+		EExpandBounds(primitiveAABB, v2);
+
+		SVec128 origin = EVecMul(EVecAdd(v0, EVecAdd(v1, v2)), onethird);
+
+		uint32_t qXYZ[3];
+		EQuantizePosition(origin, qXYZ, _blasMin, gridCellSize);
+		uint32_t mortonCode = EMortonEncode(qXYZ[0], qXYZ[1], qXYZ[2]);
+
+		SPackedRadixTreeNode node;
+		node.m_leftNode = 0xFFFFFFFF;
+		node.m_rightNode = 0xFFFFFFFF;
+		node.m_spatialKey = mortonCode;
+		node.m_leftBoundsMinX_orV0X = EVecGetFloatX(v0);
+		node.m_leftBoundsMinY_orV0Y = EVecGetFloatY(v0);
+		node.m_leftBoundsMinZ_orV0Z = EVecGetFloatZ(v0);
+		node.m_leftBoundsMaxX_orV1X = EVecGetFloatX(v1);
+		node.m_leftBoundsMaxY_orV1Y = EVecGetFloatY(v1);
+		node.m_leftBoundsMaxZ_orV1Z = EVecGetFloatZ(v1);
+		node.m_rightBoundsMinX_orV2X = EVecGetFloatX(v2);
+		node.m_rightBoundsMinY_orV2Y = EVecGetFloatY(v2);
+		node.m_rightBoundsMinZ_orV2Z = EVecGetFloatZ(v2);
+		node.m_rightBoundsMaxX_orV3X = 0.f;
+		node.m_rightBoundsMaxY_orV3Y = 0.f;
+		node.m_rightBoundsMaxZ_orV3Z = 0.f;
+
+		_leafnodes.emplace_back(node);
+	}
+
+	leafCount = (uint32_t)_leafnodes.size();
+	*_lbvh = new SPackedRadixTreeNode[2*leafCount-1];
+
+	GeneratePackedLBVH(*_lbvh, _leafnodes, leafCount);
+}
+
 bool ClosestHitTriangle(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, const float _tmax, HitInfo &_hitinfo)
 {
 	uint32_t tri = _self.m_primitiveIndex;
@@ -277,6 +354,7 @@ static int DispatcherThread(void *data)
 
 					// TODO: trace sceneTLASNode.TLAS which then traces the inner BLAS nodes
 					vec->hitinfo.geometryOut = nullptr;
+					vec->hitinfo.traversalCount = 0;
 					FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitBLAS);
 
 					float final = 0.f;
@@ -324,7 +402,7 @@ static int DispatcherThread(void *data)
 #else
 					p[(ix+iy*tilewidth)*4+0] = C; // B
 					p[(ix+iy*tilewidth)*4+1] = C; // G
-					p[(ix+iy*tilewidth)*4+2] = C; // R
+					p[(ix+iy*tilewidth)*4+2] = vec->hitinfo.traversalCount; // R
 					p[(ix+iy*tilewidth)*4+3] = 0xFF;
 #endif // SHOW_WORKER_IDS
 				}
@@ -436,6 +514,28 @@ int SDL_main(int _argc, char** _argv)
 				sceneBLASNodes[sceneBLASNodeCount].aabbMin,
 				sceneBLASNodes[sceneBLASNodeCount].aabbMax);
 			//EMatIdentity(sceneBLASNodes[sceneBLASNodeCount].transform);
+
+			std::vector<SPackedRadixTreeNode> tmpPackedNodes;
+			PLASBuilder(sceneBLASNodes[sceneBLASNodeCount].leafCount,
+				model, modelTriCount, tmpPackedNodes,
+				&sceneBLASNodes[sceneBLASNodeCount].PLAS,
+				sceneBLASNodes[sceneBLASNodeCount].aabbMin,
+				sceneBLASNodes[sceneBLASNodeCount].aabbMax);
+
+			for (uint32_t n=0; n<sceneBLASNodes[sceneBLASNodeCount].leafCount; ++n)
+			{
+				fprintf(stderr, "PLAS leaf %d: v0:(%f,%f,%f) v1:(%f,%f,%f) v2:(%f,%f,%f)\n",
+					n,
+					sceneBLASNodes[sceneBLASNodeCount].PLAS[n].m_leftBoundsMinX_orV0X,
+					sceneBLASNodes[sceneBLASNodeCount].PLAS[n].m_leftBoundsMinY_orV0Y,
+					sceneBLASNodes[sceneBLASNodeCount].PLAS[n].m_leftBoundsMinZ_orV0Z,
+					sceneBLASNodes[sceneBLASNodeCount].PLAS[n].m_leftBoundsMaxX_orV1X,
+					sceneBLASNodes[sceneBLASNodeCount].PLAS[n].m_leftBoundsMaxY_orV1Y,
+					sceneBLASNodes[sceneBLASNodeCount].PLAS[n].m_leftBoundsMaxZ_orV1Z,
+					sceneBLASNodes[sceneBLASNodeCount].PLAS[n].m_rightBoundsMinX_orV2X,
+					sceneBLASNodes[sceneBLASNodeCount].PLAS[n].m_rightBoundsMinY_orV2Y,
+					sceneBLASNodes[sceneBLASNodeCount].PLAS[n].m_rightBoundsMinZ_orV2Z);
+			}
 
 			fprintf(stderr, "BLAS %d numTri:%d bounds: (%f,%f,%f)-(%f,%f,%f)\n",
 				sceneBLASNodeCount,
@@ -560,7 +660,7 @@ int SDL_main(int _argc, char** _argv)
 		} while (!distributedAll); // We're done handing out jobs
 
 		// Rotate
-		rc.rotAng += 0.01f;
+		rc.rotAng += 0.001f;
 
 		// Wait for all threads to be done with locked image pointer before updating window image
 		int tdone;
