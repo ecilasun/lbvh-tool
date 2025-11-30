@@ -316,6 +316,29 @@ bool ClosestHitBLAS(const SRadixTreeNode &_self, const SVec128 &_rayStart, const
 	return false;
 }
 
+bool ClosestHitPLAS(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, const float _tmax, HitInfo &_hitinfo)
+{
+	uint32_t blas = _self.m_primitiveIndex;
+	if (blas == 0xFFFFFFFF)
+		return false;
+
+	if (_t < _tmax)
+	{
+		// This node is closer, test it
+		uint32_t hitNode = 0xFFFFFFFF;
+		_hitinfo.geometryIn = sceneBLASNodes[blas].geometry;
+		float tHit;
+		FindClosestHitLBVHPacked(sceneBLASNodes[blas].PLAS, sceneBLASNodes[blas].leafCount, _rayStart, _rayEnd, tHit, hitNode, _hitinfo);
+		if (hitNode != 0xFFFFFFFF && _hitinfo.geometryOut)
+		{
+			//_t = tHit;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static int DispatcherThread(void *data)
 {
 	SWorkerContext *vec = (SWorkerContext *)(data);
@@ -356,6 +379,7 @@ static int DispatcherThread(void *data)
 					vec->hitinfo.geometryOut = nullptr;
 					vec->hitinfo.traversalCount = 0;
 					FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitBLAS);
+					//FindClosestHitLBVH(sceneTLASNode.TLAS, sceneTLASNode.leafCount, vec->rc->rayOrigin, rayEnd, tHit, hitNode, vec->hitinfo, ClosestHitPLAS);
 
 					float final = 0.f;
 

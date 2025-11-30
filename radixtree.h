@@ -3,6 +3,8 @@
 #include "emath.h"
 #include <vector>
 
+#define INVALID_NODE 0xFFFFFFFF
+
 struct SRadixTreeNode
 {
     SBoundingBox m_bounds;
@@ -37,6 +39,6 @@ struct HitInfo
 typedef bool(*HitTestFunc)(const SRadixTreeNode &_self, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, const float _tmax, HitInfo &_hitinfo);
 
 void GenerateLBVH(SRadixTreeNode *_nodes, std::vector<SRadixTreeNode> &_leafNodes, const int _numNodes);
-void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, uint32_t &_hitNode, HitInfo &_hitinfo, HitTestFunc _hitTestFunc);
-
 void GeneratePackedLBVH(SPackedRadixTreeNode *_nodes, std::vector<SPackedRadixTreeNode> &_leafNodes, const int _numNodes);
+void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, uint32_t &_hitNode, HitInfo &_hitinfo, HitTestFunc _hitTestFunc);
+void FindClosestHitLBVHPacked(SPackedRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, uint32_t &_hitNode, HitInfo &_hitInfo);

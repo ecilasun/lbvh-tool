@@ -476,6 +476,181 @@ void FindClosestHitLBVH(SRadixTreeNode *_nodes, const int _numNodes, const SVec1
 	}
 }
 
+bool fast_intersect_triangle(const SVec128& ray_origin,
+                            const SVec128& ray_direction,
+                            const SVec128& v1,
+                            const SVec128& v2,
+                            const SVec128& v3,
+                            float tmin,
+                            float& closest_t,
+                            float& barycentricU,
+							float& barycentricV)
+{
+    // Determine edge vectors for clockwise triangle vertices
+    SVec128 e1 = EVecSub(v2, v1);
+    SVec128 e2 = EVecSub(v3, v1);
+
+    SVec128 s1 = EVecCross3(ray_direction, e2);
+    const float determinant = EVecGetFloatX(EVecDot3(s1, e1));
+    const float invd = determinant==0.f ? 131072.f : 1.f / determinant;
+
+    SVec128 d = EVecSub(ray_origin, v1);
+    const float u = EVecGetFloatX(EVecDot3(d, s1)) * invd;
+
+    // Barycentric coordinate U is outside range
+    if ((u < 0.f) || (u > 1.f))
+    {
+        return false;
+    }
+
+    SVec128 s2 = EVecCross3(d, e1);
+    const float v = EVecGetFloatX(EVecDot3(ray_direction, s2)) * invd;
+
+    // Barycentric coordinate V is outside range
+    if ((v < 0.f) || (u + v > 1.f))
+    {
+        return false;
+    }
+
+    // Check parametric distance
+    const float t = EVecGetFloatX(EVecDot3(e2, s2)) * invd;
+    if (t < tmin || t > closest_t)
+    {
+        return false;
+    }
+
+    // Accept hit
+    closest_t = t;
+    barycentricU = u;
+	barycentricV = v;
+
+    return true;
+}
+
+bool IntersectLeafNode(SPackedRadixTreeNode *_nodes, uint32_t nodeIndex, const SVec128& d, const SVec128& o, float tmin, float& closest_t, float& u, float& v)
+{
+	SPackedRadixTreeNode& node = _nodes[nodeIndex];
+
+	return fast_intersect_triangle(o, d,
+		EVecConst(node.m_leftBoundsMinX_orV0X, node.m_leftBoundsMinY_orV0Y, node.m_leftBoundsMinZ_orV0Z, 1.f),
+		EVecConst(node.m_leftBoundsMaxX_orV1X, node.m_leftBoundsMaxY_orV1Y, node.m_leftBoundsMaxZ_orV1Z, 1.f),
+		EVecConst(node.m_rightBoundsMinX_orV2X, node.m_rightBoundsMinY_orV2Y, node.m_rightBoundsMinZ_orV2Z, 1.f),
+		tmin, closest_t, u, v);
+}
+
+void fast_intersect_bbox(
+	const SVec128& ray_origin, const SVec128& ray_inv_dir,
+	const SVec128& box_min,
+	const SVec128& box_max,
+	float t_min, float t_max, float& s0, float& s1)
+{
+    SVec128 oxinvdir = EVecMul(EVecSub(EVecZero(), ray_origin), ray_inv_dir);
+    SVec128 f = EVecAdd(EVecMul(box_max, ray_inv_dir), oxinvdir);
+    SVec128 n = EVecAdd(EVecMul(box_min, ray_inv_dir), oxinvdir);
+    SVec128 tmax = EVecMax(f, n);
+    SVec128 tmin = EVecMin(f, n);
+    float max_t = EMinimum(EVecMinComponent3(tmax), t_max);
+    float min_t = EMaximum(EVecMaxComponent3(tmin), t_min);
+
+	s0 = min_t;
+	s1 = max_t;
+}
+
+void IntersectInternalNode(SPackedRadixTreeNode *_nodes, uint32_t nodeIndex, const SVec128 & invd, const SVec128 & o, float tmin, float tmax, uint32_t& traverseX, uint32_t& traverseY)
+{
+	SPackedRadixTreeNode& node = _nodes[nodeIndex];
+
+	float s00, s01;
+    fast_intersect_bbox(o, invd,
+		EVecConst(node.m_leftBoundsMinX_orV0X,	node.m_leftBoundsMinY_orV0Y, node.m_leftBoundsMinZ_orV0Z, 0.f),
+		EVecConst(node.m_leftBoundsMaxX_orV1X, node.m_leftBoundsMaxY_orV1Y, node.m_leftBoundsMaxZ_orV1Z, 0.f),
+		tmin, tmax, s00, s01);
+
+	float s10, s11;
+	fast_intersect_bbox(o, invd,
+		EVecConst(node.m_rightBoundsMinX_orV2X, node.m_rightBoundsMinY_orV2Y, node.m_rightBoundsMinZ_orV2Z, 0.f),
+		EVecConst(node.m_rightBoundsMaxX_orV3X, node.m_rightBoundsMaxY_orV3Y, node.m_rightBoundsMaxZ_orV3Z, 0.f),
+		tmin, tmax, s10, s11);
+
+    uint32_t traverse0 = (s00 <= s01) ? node.m_leftNode : INVALID_NODE;
+    uint32_t traverse1 = (s10 <= s11) ? node.m_rightNode : INVALID_NODE;
+
+	if (s00 < s10 && traverse0 != INVALID_NODE)
+	{
+		traverseX = traverse0;
+		traverseY = traverse1;
+	}
+	else
+	{
+		traverseX = traverse1;
+		traverseY = traverse0;
+	}
+}
+
+void FindClosestHitLBVHPacked(SPackedRadixTreeNode *_nodes, const int _numNodes, const SVec128 &_rayStart, const SVec128 &_rayEnd, float &_t, uint32_t &_hitNode, HitInfo &_hitInfo)
+{
+	uint32_t lds_stack[64];
+	int SP = 0;
+	lds_stack[SP++] = INVALID_NODE; // Invalid node
+
+	SVec128 rayOrigin = _rayStart;
+	SVec128 rayDelta = EVecSub(_rayEnd, _rayStart);
+	SVec128 rayDirection = EVecNorm3(rayDelta);
+	float ray_maxt = _t;
+	float ray_mint = 0.f;
+
+	SVec128 zeroMask = EVecCmpEQ(rayDelta, EVecZero());
+	SVec128 dividend = EVecSel(g_XMMaxFloat, g_XMOne, zeroMask);
+	SVec128 divisor = EVecSel(g_XMOne, rayDelta, zeroMask);
+	SVec128 rayInvDirection = EVecDiv(dividend, divisor);
+	float u, v;
+
+	uint32_t closestPrimitiveIndex = INVALID_NODE;
+	uint32_t nodeIndex = 0;
+
+	while(nodeIndex != INVALID_NODE)
+	{
+		bool is_tri = _nodes[nodeIndex].m_leftNode == INVALID_NODE;
+		if (is_tri)
+		{
+			if (IntersectLeafNode(_nodes, nodeIndex, rayDirection, rayOrigin, ray_mint, ray_maxt, u, v))
+			{
+				closestPrimitiveIndex = nodeIndex; // Leaf node is the child
+			}
+		}
+		else
+		{
+			uint32_t resultX = 0;
+			uint32_t resultY = 0;
+			IntersectInternalNode(_nodes, nodeIndex, rayInvDirection, rayOrigin, ray_mint, ray_maxt, resultX, resultY);
+			if (resultY != INVALID_NODE)
+			{
+				lds_stack[SP++] = resultY;
+			}
+			if (resultX != INVALID_NODE)
+			{
+				nodeIndex = resultX;
+				continue;
+			}
+		}
+
+		if (nodeIndex == INVALID_NODE && SP > 0)
+		{
+			nodeIndex = lds_stack[--SP];
+		}
+	}
+
+	if (closestPrimitiveIndex != INVALID_NODE)
+	{
+		_hitNode = closestPrimitiveIndex;
+		_t = ray_maxt;
+	}
+	else
+	{
+		_hitNode = INVALID_NODE;
+	}
+}
+
 void GeneratePackedLBVH(SPackedRadixTreeNode *_nodes, std::vector<SPackedRadixTreeNode> &_leafNodes, const int _numNodes)
 {
 	if (_numNodes == 0)
