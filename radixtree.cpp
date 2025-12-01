@@ -666,7 +666,7 @@ void GeneratePackedLBVH(SPackedRadixTreeNode *_nodes, std::vector<SPackedRadixTr
 	for (int n=firstLeafNode; n<firstLeafNode+_numNodes; ++n)
 	{
 		// Keys live on top level nodes (NOTE: This is to be discarded later)
-		_nodes[n-firstLeafNode].m_spatialKey = _leafNodes[n-firstLeafNode].m_spatialKey;
+		_nodes[n].m_spatialKey = _leafNodes[n-firstLeafNode].m_spatialKey;
 		_nodes[n].m_leftNode = _leafNodes[n-firstLeafNode].m_leftNode;
 		_nodes[n].m_rightNode = _leafNodes[n-firstLeafNode].m_rightNode;
 		_nodes[n].m_leftBoundsMinX_orV0X = _leafNodes[n-firstLeafNode].m_leftBoundsMinX_orV0X;
