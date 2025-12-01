@@ -55,7 +55,7 @@ public:
 //			memcpy( pbDest + cbTailBytes, m_pbBuffer, bytesLeft );
 
 		readOffset += cbDest;
-		m_readOffset = readOffset;
+		m_readOffset = (uint32_t)readOffset;
 
 		return 1;
 	}
@@ -85,7 +85,7 @@ public:
 		EReadWriteBarrier(0);
 
 		writeOffset += cbSrc;
-		m_writeOffset = writeOffset;
+		m_writeOffset = (uint32_t)writeOffset;
 
 		return 1;
 	}

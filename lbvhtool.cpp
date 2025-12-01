@@ -2,6 +2,7 @@
 #include "locklesspipe.h"
 #include "radixtree.h"
 #include "objloader.h"
+#include "emath.h"
 
 // Folder/file name of the scene to work with
 //#define SCENENAME "sibenik"
@@ -399,7 +400,7 @@ static int DispatcherThread(void *data)
 
 						// Global + NdotL
 						{
-							SVec128 uvw;
+							//SVec128 uvw;
 							float fuvw[3];
 							CalculateBarycentrics(
 								vec->hitinfo.hitPos,
@@ -477,9 +478,9 @@ int SDL_main(int _argc, char** _argv)
 
 	objl::Loader objloader;
 #if defined(PLATFORM_WINDOWS)
-	if (!objloader.LoadFile(SCENENAME "\\" SCENENAME ".obj"))
+	if (!objloader.LoadFile("..\\" SCENENAME "\\" SCENENAME ".obj"))
 #else
-	if (!objloader.LoadFile(SCENENAME "/" SCENENAME ".obj"))
+	if (!objloader.LoadFile(..\\" SCENENAME "/" SCENENAME ".obj"))
 #endif
 	{
 		printf("Failed to load OBJ file\n");
@@ -504,7 +505,7 @@ int SDL_main(int _argc, char** _argv)
 	// Build BLAS array
 	for (auto &mesh : objloader.LoadedMeshes) // ..or, the entire scene
 	{
-		int triCount = mesh.Indices.size()/3;
+		int triCount = (int)(mesh.Indices.size()/3);
 		// Start of model
 		triangle *model = &sceneGeometry[t];
 		uint32_t modelTriCount = 0;

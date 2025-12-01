@@ -403,7 +403,7 @@ void GenerateLBVH(SRadixTreeNode *_nodes, std::vector<SRadixTreeNode> &_leafNode
 	ERadixSortSpatialDatabaseAscending(_leafNodes.data(), _numNodes);
 
 	// Copy sorted leaf nodes
-	for (uint32_t n=firstLeafNode; n<firstLeafNode+_numNodes; ++n)
+	for (int n=firstLeafNode; n<firstLeafNode+_numNodes; ++n)
 	{
 		// Keys live on top level nodes (NOTE: This is to be discarded later)
 		_nodes[n-firstLeafNode].m_spatialKey = _leafNodes[n-firstLeafNode].m_spatialKey;
@@ -663,7 +663,7 @@ void GeneratePackedLBVH(SPackedRadixTreeNode *_nodes, std::vector<SPackedRadixTr
 	EPackedRadixSortSpatialDatabaseAscending(_leafNodes.data(), _numNodes);
 
 	// Copy sorted leaf nodes
-	for (uint32_t n=firstLeafNode; n<firstLeafNode+_numNodes; ++n)
+	for (int n=firstLeafNode; n<firstLeafNode+_numNodes; ++n)
 	{
 		// Keys live on top level nodes (NOTE: This is to be discarded later)
 		_nodes[n-firstLeafNode].m_spatialKey = _leafNodes[n-firstLeafNode].m_spatialKey;

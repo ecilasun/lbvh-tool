@@ -3,3 +3,6 @@ waf3-**
 build/**
 .lock**
 .waf3-**/**
+lbvhtool/.vs/**
+lbvhtool/x64/Debug/**
+lbvhtool/x64/Release/**
