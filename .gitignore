@@ -6,3 +6,5 @@ build/**
 lbvhtool/.vs/**
 lbvhtool/x64/Debug/**
 lbvhtool/x64/Release/**
+lbvhtool/lbvhtool/x64/Debug/**
+lbvhtool/lbvhtool/x64/Release/**
